@@ -1,0 +1,9 @@
+Chatbot 
+swift web 
+
+no need to show tl(pl)  they dont have  a count get it? only employees and tl(pl) doesn't have a target also 
+
+Confirmed — PL/TL is determined by Project.lead or a ProjectAssignment with role_on_project='Team Leader', not by role. Since role='EMPLOYEE' doesn't exclude them, they still show up in the Excel export. Let's exclude them. and tl(pl) doesn't have a target also
+
+admin have a branch or not they are also a employee right they have also a salary 
+or every branch have one admin we want like that or not

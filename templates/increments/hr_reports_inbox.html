@@ -1,0 +1,68 @@
+{% extends 'core/base.html' %}
+{% block content %}
+<div class="page-header"><h1>Manager Reports</h1></div>
+<div class="card" style="overflow-x:auto;">
+  <table style="width:100%; border-collapse:collapse; table-layout:fixed;">
+    <colgroup>
+      <col style="width:120px;">
+      <col style="width:110px;">
+      <col style="width:120px;">
+      <col style="width:110px;">
+      <col style="width:120px;">
+      <col style="width:160px;">
+      <col style="width:100px;">
+      <col style="width:auto; min-width:200px;">
+    </colgroup>
+    <thead>
+      <tr style="border-bottom:2px solid var(--grey-100, #f1f5f9);">
+        <th style="padding:10px 14px; text-align:left; font-size:0.72rem; letter-spacing:.07em; color:var(--grey-500,#64748b); font-weight:700; text-transform:uppercase;">Employee</th>
+        <th style="padding:10px 14px; text-align:left; font-size:0.72rem; letter-spacing:.07em; color:var(--grey-500,#64748b); font-weight:700; text-transform:uppercase;">Manager</th>
+        <th style="padding:10px 14px; text-align:left; font-size:0.72rem; letter-spacing:.07em; color:var(--grey-500,#64748b); font-weight:700; text-transform:uppercase;">Current Basic</th>
+        <th style="padding:10px 14px; text-align:left; font-size:0.72rem; letter-spacing:.07em; color:var(--grey-500,#64748b); font-weight:700; text-transform:uppercase;">Suggested %</th>
+        <th style="padding:10px 14px; text-align:left; font-size:0.72rem; letter-spacing:.07em; color:var(--grey-500,#64748b); font-weight:700; text-transform:uppercase;">Submitted On</th>
+        <th style="padding:10px 14px; text-align:left; font-size:0.72rem; letter-spacing:.07em; color:var(--grey-500,#64748b); font-weight:700; text-transform:uppercase;">Status</th>
+        <th style="padding:10px 14px; text-align:left; font-size:0.72rem; letter-spacing:.07em; color:var(--grey-500,#64748b); font-weight:700; text-transform:uppercase;">Report</th>
+        <th style="padding:10px 14px; text-align:left; font-size:0.72rem; letter-spacing:.07em; color:var(--grey-500,#64748b); font-weight:700; text-transform:uppercase;">Comments</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in requests %}
+      <tr style="border-bottom:1px solid var(--grey-100,#f1f5f9);">
+        <td style="padding:14px 14px; font-weight:600; font-size:0.9rem; vertical-align:top;">{{ r.user.get_full_name|default:r.user.username }}</td>
+        <td style="padding:14px 14px; color:var(--grey-600,#475569); font-size:0.88rem; vertical-align:top;">{{ r.feedback_manager.get_full_name|default:r.feedback_manager.username|default:"-" }}</td>
+        <td style="padding:14px 14px; font-size:0.88rem; vertical-align:top;">Rs. {{ r.current_basic }}</td>
+        <td style="padding:14px 14px; font-weight:700; color:#1D9A55; font-size:0.9rem; vertical-align:top;">
+          {{ r.feedback.suggested_percent|default:"-" }}{% if r.feedback.suggested_percent %}%{% endif %}
+        </td>
+        <td style="padding:14px 14px; font-size:0.85rem; color:var(--grey-500,#64748b); white-space:nowrap; vertical-align:top;">{{ r.report_submitted_at|date:"d M Y"|default:"-" }}</td>
+        <td style="padding:14px 14px; vertical-align:top;">
+          {% if r.status == 'REPORT_SUBMITTED' %}
+            <span style="background:#EFF6FF;color:#1D4ED8;padding:3px 10px;border-radius:99px;font-size:0.75rem;font-weight:600;white-space:nowrap;">Awaiting HR Review</span>
+          {% elif r.status == 'PENDING_COO' %}
+            <span style="background:#FFF7ED;color:#C2410C;padding:3px 10px;border-radius:99px;font-size:0.75rem;font-weight:600;white-space:nowrap;">Forwarded to COO</span>
+          {% elif r.status == 'COO_DECIDED' %}
+            <span style="background:#F0FDF4;color:#15803D;padding:3px 10px;border-radius:99px;font-size:0.75rem;font-weight:600;white-space:nowrap;">COO Decided</span>
+          {% elif r.status == 'APPLIED' %}
+            <span style="background:#F0FDF4;color:#15803D;padding:3px 10px;border-radius:99px;font-size:0.75rem;font-weight:600;white-space:nowrap;">Salary Updated</span>
+          {% elif r.status == 'REJECTED' %}
+            <span style="background:#FEF2F2;color:#B91C1C;padding:3px 10px;border-radius:99px;font-size:0.75rem;font-weight:600;white-space:nowrap;">Rejected</span>
+          {% else %}
+            <span style="font-size:0.85rem;">{{ r.get_status_display }}</span>
+          {% endif %}
+        </td>
+        <td style="padding:14px 14px; vertical-align:top;">
+          {% if r.feedback.report_file %}
+          <a href="{{ r.feedback.report_file.url }}" class="btn btn-outline btn-sm" target="_blank">Download</a>
+          {% else %}<span style="color:var(--grey-400,#94a3b8);">—</span>{% endif %}
+        </td>
+        <td style="padding:14px 14px; font-size:0.875rem; color:var(--grey-700,#334155); line-height:1.6; white-space:normal; word-break:break-word; vertical-align:top;">
+          {{ r.feedback.description|default:"—" }}
+        </td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="8" class="empty-state" style="padding:32px; text-align:center; color:var(--grey-400,#94a3b8);">No manager reports submitted yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

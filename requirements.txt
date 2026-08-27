@@ -1,0 +1,59 @@
+# SPS HRMS (prostaff) — core app requirements
+# Generated from the working venv shipped with the project.
+#
+# Does NOT include the RAG/chatbot-knowledge-base packages (langchain,
+# langchain-ollama, langchain-community, langchain-text-splitters,
+# faiss-cpu, pypdf, docx2txt) or Ollama itself — install those separately
+# only if you're setting up the RAG feature; see rag_engine.py's docstring
+# for the exact pip install line and required Ollama models.
+#
+# Also excludes `anthropic` (the Claude API SDK) and its dependency chain
+# (anyio, distro, docstring_parser, h11, httpcore, httpx, jiter, pydantic,
+# pydantic_core, sniffio, typing-inspection, typing_extensions,
+# annotated-types) — it isn't imported anywhere in the app code.
+
+Django==6.0.8
+django-crispy-forms==2.7
+crispy-bootstrap5==2026.3
+django-celery-beat==2.9.0
+django-timezone-field==7.2.2
+
+# Task queue (used by django-celery-beat)
+celery==5.6.3
+kombu==5.6.2
+amqp==5.3.1
+billiard==4.2.4
+vine==5.1.0
+click==8.4.2
+click-didyoumean==0.3.1
+click-plugins==1.1.1.2
+click-repl==0.3.0
+prompt_toolkit==3.0.53
+wcwidth==0.8.2
+python-crontab==3.3.0
+cron-descriptor==1.4.5
+
+# Database
+mysqlclient==2.2.8
+
+# Files / exports
+openpyxl==3.1.5
+et_xmlfile==2.0.0
+reportlab==5.0.0
+pillow==12.3.0
+
+# Config / env
+python-dotenv==1.2.2
+
+# Misc support libraries
+asgiref==3.12.1
+certifi==2026.7.22
+charset-normalizer==3.4.9
+colorama==0.4.6
+idna==3.19
+packaging==26.3
+python-dateutil==2.9.0.post0
+six==1.17.0
+sqlparse==0.5.5
+tzdata==2026.3
+tzlocal==5.4.4

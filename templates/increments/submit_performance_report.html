@@ -1,0 +1,15 @@
+{% extends 'core/base.html' %}
+{% block content %}
+<div class="page-header"><h1>Submit Performance Report for {{ increment.user.get_full_name|default:increment.user.username }}</h1></div>
+<div class="card">
+  <p style="color:var(--grey-700);">HR has requested a performance report for this employee ahead of their increment review. Write the report below and submit it for HR's review.</p>
+  <form method="post">
+    {% csrf_token %}
+    <label>Performance Report</label>
+    <textarea name="performance_report" class="form-control" rows="8" placeholder="Describe the employee's performance, achievements, and any areas of concern..."></textarea>
+
+    <button type="submit" class="btn btn-primary" style="margin-top:10px;">Submit Report</button>
+    <a href="{% url 'increments:manager_report_inbox' %}" class="btn btn-outline" style="margin-top:10px;">Cancel</a>
+  </form>
+</div>
+{% endblock %}

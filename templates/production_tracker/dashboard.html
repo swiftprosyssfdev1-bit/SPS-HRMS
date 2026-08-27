@@ -1,0 +1,186 @@
+{% extends 'core/base.html' %}
+{% block content %}
+<div class="page-header" style="display:flex; justify-content:space-between; align-items:center;">
+  <h1>Hourly Tracker &mdash; Team Overview</h1>
+  <div style="display:flex; gap:10px; align-items:center;">
+    <form method="get" style="display:flex; gap:10px; margin:0;">
+      <input type="date" name="date" class="form-control" value="{{ selected_date|date:'Y-m-d' }}" style="margin:0;">
+      <button type="submit" class="btn btn-primary">Go</button>
+    </form>
+    <a href="{% url 'production_tracker:export_tracker_excel' %}?date={{ selected_date|date:'Y-m-d' }}" class="btn btn-success">Download Monthly Report (Excel)</a>
+  </div>
+</div>
+
+{% for project, rows in project_groups %}
+<div class="card" style="overflow-x:auto; margin-bottom:16px;">
+  <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:10px;">
+    <h3 style="margin:0;"><a href="{% url 'projects:project_detail' project.id %}">{{ project.name }}</a></h3>
+    {% if can_set_production_target or can_set_qa_target %}
+    <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap;">
+      {% if can_set_production_target and selected_date >= today %}
+      <form method="post" action="{% url 'production_tracker:set_project_target' project.id %}" style="display:flex; gap:6px; align-items:center; margin:0;">
+        {% csrf_token %}
+        <input type="hidden" name="date" value="{{ selected_date|date:'Y-m-d' }}">
+        <input type="hidden" name="work_type" value="PRODUCTION">
+        <label style="margin:0; font-size:0.85rem; color:var(--grey-500);">Production Target:</label>
+        <input type="number" min="0" name="daily_target" value="{{ project.daily_target }}" class="form-control" style="width:100px; margin:0;">
+        <button type="submit" class="btn btn-primary btn-sm">Set for Team</button>
+      </form>
+      {% else %}
+      <span style="font-size:0.85rem; color:var(--grey-500);">Production Target: {{ project.daily_target|default:"Not set" }}{% if can_set_production_target %} <em>(past date — locked)</em>{% endif %}</span>
+      {% endif %}
+      {% if can_set_qa_target and selected_date >= today %}
+      <form method="post" action="{% url 'production_tracker:set_project_target' project.id %}" style="display:flex; gap:6px; align-items:center; margin:0;">
+        {% csrf_token %}
+        <input type="hidden" name="date" value="{{ selected_date|date:'Y-m-d' }}">
+        <input type="hidden" name="work_type" value="QA">
+        <label style="margin:0; font-size:0.85rem; color:var(--grey-500);">QA Target:</label>
+        <input type="number" min="0" name="daily_target" value="{{ project.qa_daily_target }}" class="form-control" style="width:100px; margin:0;">
+        <button type="submit" class="btn btn-primary btn-sm">Set for Team</button>
+      </form>
+      {% else %}
+      <span style="font-size:0.85rem; color:var(--grey-500);">QA Target: {{ project.qa_daily_target|default:"Not set" }}{% if can_set_qa_target %} <em>(past date — locked)</em>{% endif %}</span>
+      {% endif %}
+    </div>
+    {% else %}
+      <span>Production Target: {{ project.daily_target|default:"Not set" }} &nbsp;|&nbsp; QA Target: {{ project.qa_daily_target|default:"Not set" }}</span>
+    {% endif %}
+  </div>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Employee ID</th>
+        <th>Name</th>
+        <th>Work Type</th>
+        <th>Target/Day</th>
+        <th>Actual Target</th>
+        <th>Achieved</th>
+        <th>Hours Worked</th>
+        <th>Efficiency %</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+        {% if row.records %}
+          {% for record in row.records %}
+          <tr>
+            {% if forloop.first %}
+            <td rowspan="{{ row.records|length }}">{{ row.user.employee_id|default:"-" }}</td>
+            <td rowspan="{{ row.records|length }}">
+              <a href="{% url 'production_tracker:employee_tracker_history' row.user.id %}" style="text-decoration: none;">
+                {{ row.user.get_full_name|default:row.user.username }}
+              </a>
+            </td>
+            {% endif %}
+            <td>{{ record.get_work_type_display }}</td>
+            <td>{{ record.target_day }}</td>
+            <td>{{ record.actual_target }}</td>
+            <td>{{ record.achieved }}</td>
+            <td>{{ record.hours_worked }}</td>
+            <td>
+              {% if record.efficiency_percentage < 50 %}
+                <span class="badge badge-danger">{{ record.efficiency_percentage }}%</span>
+              {% elif record.efficiency_percentage < 80 %}
+                <span class="badge badge-warning">{{ record.efficiency_percentage }}%</span>
+              {% else %}
+                <span class="badge badge-success">{{ record.efficiency_percentage }}%</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        {% else %}
+        <tr>
+          <td>{{ row.user.employee_id|default:"-" }}</td>
+          <td>
+            <a href="{% url 'production_tracker:employee_tracker_history' row.user.id %}" style="text-decoration: none;">
+              {{ row.user.get_full_name|default:row.user.username }}
+            </a>
+          </td>
+          <td>-</td>
+          <td>{{ project.daily_target|default:"-" }}</td>
+          <td colspan="4" style="color:#999;">No entry for this date yet</td>
+        </tr>
+        {% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endfor %}
+
+{% if unassigned_rows %}
+<div class="card" style="overflow-x:auto;">
+  <h3 style="margin-top:0;">Unassigned (no current project)</h3>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Employee ID</th>
+        <th>Name</th>
+        <th>Target/Day</th>
+        <th>Actual Target</th>
+        <th>Achieved</th>
+        <th>Hours Worked</th>
+        <th>Efficiency %</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in unassigned_rows %}
+      {% with record=row.records|first %}
+      <tr>
+        <td>{{ row.user.employee_id|default:"-" }}</td>
+        <td>
+          <a href="{% url 'production_tracker:employee_tracker_history' row.user.id %}" style="text-decoration: none;">
+            {{ row.user.get_full_name|default:row.user.username }}
+          </a>
+        </td>
+        {% if record %}
+          <td>
+            {% if can_set_target %}
+            <form method="post" action="{% url 'production_tracker:set_target' row.user.id %}" style="display:flex; gap:6px; margin:0;">
+              {% csrf_token %}
+              <input type="hidden" name="date" value="{{ selected_date|date:'Y-m-d' }}">
+              <input type="number" min="0" name="target_day" value="{{ record.target_day }}" class="form-control" style="width:90px; margin:0;">
+              <button type="submit" class="btn btn-primary btn-sm">Set</button>
+            </form>
+            {% else %}
+              {{ record.target_day }}
+            {% endif %}
+          </td>
+          <td>{{ record.actual_target }}</td>
+          <td>{{ record.achieved }}</td>
+          <td>{{ record.hours_worked }}</td>
+          <td>
+            {% if record.efficiency_percentage < 50 %}
+              <span class="badge badge-danger">{{ record.efficiency_percentage }}%</span>
+            {% elif record.efficiency_percentage < 80 %}
+              <span class="badge badge-warning">{{ record.efficiency_percentage }}%</span>
+            {% else %}
+              <span class="badge badge-success">{{ record.efficiency_percentage }}%</span>
+            {% endif %}
+          </td>
+        {% else %}
+          <td>
+            {% if can_set_target %}
+            <form method="post" action="{% url 'production_tracker:set_target' row.user.id %}" style="display:flex; gap:6px; margin:0;">
+              {% csrf_token %}
+              <input type="hidden" name="date" value="{{ selected_date|date:'Y-m-d' }}">
+              <input type="number" min="0" name="target_day" placeholder="0" class="form-control" style="width:90px; margin:0;">
+              <button type="submit" class="btn btn-primary btn-sm">Set</button>
+            </form>
+            {% else %}
+              -
+            {% endif %}
+          </td>
+          <td colspan="4" style="color:#999;">No entry for this date yet</td>
+        {% endif %}
+      </tr>
+      {% endwith %}
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% if not project_groups and not unassigned_rows %}
+<div class="card">No active production employees found.</div>
+{% endif %}
+{% endblock %}

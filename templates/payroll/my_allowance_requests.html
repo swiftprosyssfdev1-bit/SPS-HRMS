@@ -1,0 +1,73 @@
+{% extends 'core/base.html' %}
+{% block content %}
+<div class="page-header"><h1>Allowance Requests</h1></div>
+
+<div class="card">
+  <h3 style="margin-top:0;">Request an Allowance</h3>
+  <p style="color:var(--grey-500); font-size:0.85rem; margin-top:-8px;">
+    Attach proof (PDF, JPG or PNG). {% if user.department and 'production' in user.department.name|lower %}
+    As a Production employee, your request first goes to your Project Manager, then to HR.
+    {% else %}Your request goes straight to HR for approval.{% endif %}
+  </p>
+  <form method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:0 20px;">
+      <div>
+        <label>Allowance Type</label>
+        {{ form.allowance_type }}
+      </div>
+      <div>
+        <label>Amount</label>
+        {{ form.amount }}
+      </div>
+    </div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:0 20px;">
+      <div>
+        <label>Month</label>
+        <select name="month" class="form-control">
+          {% for num, name in months %}
+          <option value="{{ num }}" {% if form.month.value|stringformat:"s" == num|stringformat:"s" %}selected{% endif %}>{{ name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label>Year</label>
+        <select name="year" class="form-control">
+          {% for y in years %}
+          <option value="{{ y }}" {% if form.year.value|stringformat:"s" == y|stringformat:"s" %}selected{% endif %}>{{ y }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    <label>Reason</label>
+    {{ form.reason }}
+    <label>Proof (PDF, JPG or PNG)</label>
+    {{ form.proof }}
+    {% if form.proof.errors %}<p style="color:#D8000C; font-size:0.85rem;">{{ form.proof.errors|striptags }}</p>{% endif %}
+    <button type="submit" class="btn btn-primary" style="margin-top:12px;">Submit Request</button>
+  </form>
+</div>
+
+<div class="card">
+  <h3>My Requests</h3>
+  <table>
+    <tr><th>Type</th><th>Month</th><th>Amount</th><th>Reason</th><th>Proof</th><th>Status</th></tr>
+    {% for r in requests %}
+    <tr>
+      <td>{{ r.get_allowance_type_display }}</td>
+      <td>{{ r.month }}/{{ r.year }}</td>
+      <td>{{ r.amount }}</td>
+      <td>{{ r.reason|default:"-"|truncatewords:8 }}</td>
+      <td><a href="{{ r.proof.url }}" target="_blank">View</a></td>
+      <td>
+        {% if r.status == 'APPROVED' %}<span class="badge badge-success">Approved</span>
+        {% elif r.status == 'REJECTED' %}<span class="badge badge-danger">Rejected</span>
+        {% elif r.status == 'PENDING_PM' %}<span class="badge badge-warning">Pending Project Manager</span>
+        {% elif r.status == 'PENDING_HR' %}<span class="badge badge-warning">Pending HR</span>
+        {% else %}<span class="badge badge-warning">{{ r.get_status_display }}</span>{% endif %}
+      </td>
+    </tr>
+    {% empty %}<tr><td colspan="6" class="empty-state">No allowance requests yet.</td></tr>{% endfor %}
+  </table>
+</div>
+{% endblock %}

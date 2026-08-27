@@ -1,0 +1,38 @@
+{% extends 'core/base.html' %}
+{% block content %}
+<div class="page-header">
+  <h1>Appraisal Entry: {{ emp.get_full_name }}</h1>
+  <p>Date: {{ selected_date|date:'M d, Y' }}</p>
+  <a href="{% url 'employees:appraisal_dashboard' %}?date={{ selected_date|date:'Y-m-d' }}" class="btn btn-outline btn-sm">&larr; Back to Dashboard</a>
+</div>
+
+<div class="card">
+  <form method="post">
+    {% csrf_token %}
+    {{ formset.management_form }}
+    
+    <table class="table" style="margin-bottom:20px;">
+      <thead>
+        <tr>
+          <th>Hour Slot</th>
+          <th>Target</th>
+          <th>Actual</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for form in formset %}
+        <tr style="display:none;">
+          <td>{{ form.id }}{{ form.hour_slot }}</td>
+        </tr>
+        <tr>
+          <td style="vertical-align:middle; font-weight:600;">{{ form.instance.hour_slot }}</td>
+          <td>{{ form.target }}</td>
+          <td>{{ form.actual }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <button type="submit" class="btn btn-primary">Save Appraisal</button>
+  </form>
+</div>
+{% endblock %}

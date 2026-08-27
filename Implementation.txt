@@ -1,0 +1,1075 @@
+# HRMS Advanced Feature Implementation Prompt
+
+Implement the following features in the existing Django HRMS application.
+
+Do not rebuild the application from scratch.
+
+First inspect the existing models, views, URLs, templates, authentication, role/permission system, attendance system, leave system, project system, email configuration and existing dashboard structure.
+
+Reuse the existing architecture wherever possible.
+
+Do not create duplicate models or duplicate workflows if an equivalent feature already exists.
+
+---
+
+# 1. Leave Request Categories
+
+Employees must be able to select the **type/category of leave** when submitting a leave request.
+
+The leave request form should contain a required:
+
+**Leave Category**
+
+Example categories:
+
+* Casual Leave
+* Sick Leave
+* Emergency Leave
+* Personal Leave
+* Earned Leave
+* Medical Leave
+* Maternity Leave
+* Paternity Leave
+* Other
+
+The system should allow HR/Admin to manage the available leave categories rather than hard-coding them permanently.
+
+Each leave request must store:
+
+* employee
+* category
+* start date
+* end date
+* number of days
+* reason
+* attachment if required
+* submitted date
+* current approver
+* approval status
+* rejection reason
+* escalation status
+* escalation date
+
+The selected leave category must appear to:
+
+* Employee
+* Reporting Manager
+* PM
+* GM
+* HR
+* Admin
+
+where permitted by their role.
+
+---
+
+# 2. Leave Balance, Monthly Usage and LOP Warning
+
+When an employee applies for leave, the system must calculate their current leave usage and remaining balance.
+
+Before submitting the request, show:
+
+```text
+Available Balance
+Used This Month
+Already Pending
+Requested Days
+Remaining Balance
+```
+
+Example:
+
+```text
+Casual Leave
+
+Available Balance: 3 days
+Used This Month: 2 days
+Pending: 0 days
+Requested: 2 days
+
+Remaining after request: 1 day
+```
+
+If the employee does not have enough leave balance, show a clear warning.
+
+Example:
+
+```text
+⚠ Leave Balance Warning
+
+You have only 1 day of Casual Leave remaining.
+
+You are requesting 3 days.
+
+The additional 2 days may be treated as Loss of Pay (LOP).
+```
+
+Before submission, clearly tell the employee whether:
+
+* the entire request is covered by available leave
+* part of the request will become LOP
+* the entire request will become LOP
+
+Do not silently convert leave into LOP.
+
+The employee must see the warning before confirming the request.
+
+Store LOP days separately from normal approved leave days.
+
+Example:
+
+```text
+Requested: 5 days
+Available Leave: 3 days
+Covered Leave: 3 days
+LOP: 2 days
+```
+
+The approval screen must also show this information to the manager/approver.
+
+---
+
+# 3. Leave / Permission / WFH Skip-Level Escalation
+
+Implement automatic escalation for:
+
+* Leave
+* Permission
+* WFH
+
+The first approver should normally be the employee's reporting manager.
+
+However, if the reporting manager does not respond within the configured SLA, the request must automatically escalate to the next higher-level manager.
+
+Example:
+
+```text
+Employee
+    ↓
+PL
+    ↓
+PM
+    ↓
+GM
+```
+
+If PM does not respond:
+
+```text
+Employee
+    ↓
+PM
+    ↓
+No response within SLA
+    ↓
+GM
+```
+
+The request must appear in the GM's:
+
+**Escalated Requests / Pending Approvals**
+
+section.
+
+The escalation should happen automatically.
+
+Do not require HR to manually move the request.
+
+---
+
+# 4. Dynamic Management Hierarchy
+
+Do NOT hard-code the escalation as:
+
+```text
+Employee → PM → GM
+```
+
+The system must determine the hierarchy dynamically.
+
+For example:
+
+```text
+Employee → PL → PM → GM
+```
+
+or:
+
+```text
+Employee → PM → GM
+```
+
+or:
+
+```text
+Employee → Supervisor → PM → GM
+```
+
+The system should find the next valid manager from the configured organization hierarchy.
+
+Store escalation history:
+
+* original approver
+* current approver
+* escalation level
+* escalation reason
+* submitted timestamp
+* SLA deadline
+* escalated timestamp
+* final approver
+* final decision
+* decision timestamp
+
+HR/Admin should be able to view the entire approval history.
+
+---
+
+# 5. GM → Project → PM → PL → Employee Hierarchy
+
+The project structure must support multiple GMs and multiple projects.
+
+Important:
+
+**One PM can manage many projects.**
+
+Also:
+
+**Different GMs can assign different projects to the same PM.**
+
+Example:
+
+```text
+GM 1
+ ├── Project A → PM 1
+ └── Project B → PM 1
+
+GM 2
+ ├── Project C → PM 1
+ └── Project D → PM 2
+
+GM 3
+ └── Project E → PM 1
+```
+
+PM 1 therefore manages:
+
+```text
+Project A
+Project B
+Project C
+Project E
+```
+
+even though those projects were assigned by different GMs.
+
+Do NOT permanently assign PM 1 to only one GM.
+
+The GM relationship must belong to the **project**.
+
+The project should have a relationship similar to:
+
+```text
+Project
+    ├── GM
+    ├── PM
+    ├── PL(s)
+    └── Employees
+```
+
+The GM field should use the existing `core.User` model with the appropriate General Manager role.
+
+If the existing project model already has manager/lead fields, preserve them and add the GM relationship appropriately.
+
+---
+
+# 6. Project-Based Access Control
+
+Access must be based on project scope.
+
+### GM
+
+A GM can see full details of projects created/owned by that GM:
+
+```text
+GM
+ ↓
+Project
+ ↓
+PM
+ ↓
+PL
+ ↓
+Employees
+```
+
+GM can see:
+
+* Project details
+* Assigned PM
+* PLs
+* Employees
+* Attendance
+* Leave
+* Permission
+* WFH
+* Team statistics
+* Leave analytics
+* Pending approvals
+* Escalated requests
+* Project reports
+
+A GM must NOT automatically see another GM's projects.
+
+---
+
+# 7. PM Multi-Project Access
+
+A PM must see every project assigned to them, regardless of which GM assigned it.
+
+Example:
+
+```text
+GM 1 → Project Alpha → PM 1
+GM 2 → Project Beta → PM 1
+GM 3 → Project Gamma → PM 1
+```
+
+PM 1 dashboard:
+
+```text
+My Projects
+
+Project Alpha
+GM: GM 1
+
+Project Beta
+GM: GM 2
+
+Project Gamma
+GM: GM 3
+```
+
+When PM selects a project, show only the team belonging to that project.
+
+The PM can manage:
+
+* PLs
+* Employees/Agents
+* Attendance
+* Leave
+* Permission
+* WFH
+* Team reports
+* Project-specific analytics
+
+Do not mix employees from unrelated projects.
+
+---
+
+# 8. Project-Specific Escalation
+
+This is extremely important.
+
+Because one PM can work under multiple GMs, escalation must follow the **specific project's hierarchy**.
+
+Example:
+
+```text
+Project Alpha
+GM 1
+PM 1
+Employee A
+```
+
+Employee A submits leave.
+
+PM 1 does not respond.
+
+The request must escalate to:
+
+```text
+Employee A
+   ↓
+PM 1
+   ↓
+GM 1
+```
+
+Not GM 2 or GM 3.
+
+Another project:
+
+```text
+Project Beta
+GM 2
+PM 1
+Employee B
+```
+
+Employee B's request:
+
+```text
+Employee B
+   ↓
+PM 1
+   ↓
+GM 2
+```
+
+Therefore, the approval request must retain its project/team context.
+
+---
+
+# 9. Leave Analytics and Pie Chart
+
+Add leave analytics to GM, PM and HR dashboards according to their access scope.
+
+Show:
+
+* Leave by category
+* Leave days by employee
+* Leave days by project
+* Monthly leave trend
+* Top employees taking leave
+* Pending leave
+* Approved leave
+* Rejected leave
+* LOP days
+* Escalated leave
+
+Add a pie/donut chart:
+
+**Leave Purpose / Category Distribution**
+
+Example:
+
+```text
+Sick Leave
+Casual Leave
+Personal Leave
+Emergency Leave
+Earned Leave
+Other
+```
+
+The chart must use actual database data.
+
+Do NOT use hard-coded sample numbers.
+
+Also add:
+
+**Leave Days by Employee**
+
+and:
+
+**Leave Days by Project**
+
+where useful.
+
+The dashboard should allow filtering by:
+
+* Date range
+* Project
+* PM
+* PL
+* Leave category
+
+---
+
+# 10. Employee Document Management
+
+HR must be able to send official documents to specific employees.
+
+Documents include:
+
+* Experience Letter
+* Promotion Letter
+* Offer Letter
+* Appointment Letter
+* Relieving Letter
+* Salary/Increment Letter
+* Other HR Documents
+
+HR should be able to:
+
+1. Select an employee.
+2. Select document type.
+3. Upload the document.
+4. Add optional description.
+5. Publish/send the document.
+
+The employee should see:
+
+```text
+My Documents
+
+Experience Letter
+Promotion Letter
+Offer Letter
+Increment Letter
+```
+
+Each document should have:
+
+* document type
+* employee
+* uploaded by
+* uploaded date
+* file
+* description
+* status
+
+Employees must only see documents assigned to themselves.
+
+HR/Admin can manage all documents according to permissions.
+
+The employee should be able to securely download their documents.
+
+Do not expose document URLs publicly.
+
+Use authenticated access for document downloads.
+
+---
+
+# 11. Unauthorized Absence / Absconding Alert
+
+Implement an automated absence monitoring system.
+
+If an employee has no attendance and no approved leave/permission/WFH for more than the configured threshold, generate an alert.
+
+Default threshold:
+
+**More than 3 consecutive working days**
+
+Example:
+
+```text
+Monday  → No attendance
+Tuesday → No attendance
+Wednesday → No attendance
+Thursday → No attendance
+```
+
+The system should identify this as a possible unauthorized absence/absconding case.
+
+Do not count:
+
+* Weekly offs
+* Approved holidays
+* Approved leave
+* Approved WFH
+* Approved permission
+* Days before joining date
+
+The system should create an alert for HR/authorized managers.
+
+Example:
+
+```text
+⚠ Absence Alert
+
+Employee: Anitha
+Project: Project Alpha
+Reporting Manager: PM 1
+
+Unauthorized absence:
+4 consecutive working days
+
+Last attendance:
+21-Aug-2026
+```
+
+---
+
+# 12. Absconding Email Alert
+
+When the threshold is reached, automatically send an email alert.
+
+Recipients should be based on the configured hierarchy.
+
+Possible recipients:
+
+* Reporting Manager
+* PM
+* GM
+* HR
+
+HR/Admin should be able to configure the recipients.
+
+The email should contain:
+
+* Employee name
+* Employee ID
+* Project
+* Reporting manager
+* Last attendance date
+* Number of consecutive unauthorized absence days
+* Date range
+* Link to HRMS record
+
+Do not send duplicate emails every day for the same incident.
+
+Create an absence case/alert and track:
+
+* alert created
+* email sent
+* acknowledged
+* resolved
+* resolved by
+* resolution date
+* remarks
+
+---
+
+# 13. Desktop/Laptop-Only Website
+
+The HRMS is intended for laptop/desktop use.
+
+Do not build a mobile application or mobile-first UI.
+
+If a user opens the HRMS from a phone or very small screen, display a clear message:
+
+```text
+Desktop Access Required
+
+This HRMS is optimized for laptop and desktop computers.
+
+Please open the HRMS on a laptop or desktop for the best experience.
+```
+
+Do not attempt to squeeze the entire desktop interface into a mobile screen.
+
+However, do not rely on frontend device detection for security.
+
+---
+
+# 14. Inspect / Developer Tools Protection
+
+The application should add basic browser-side protections such as:
+
+* Disable context menu where appropriate.
+* Block common developer-tool keyboard shortcuts where practical.
+* Prevent accidental right-click actions.
+* Do not expose sensitive information in frontend HTML/JavaScript.
+* Do not expose API secrets.
+* Do not put authorization logic only in JavaScript.
+
+IMPORTANT:
+
+Browser developer tools cannot be completely disabled.
+
+Therefore, real security must be implemented on the backend:
+
+```text
+User
+ ↓
+Authentication
+ ↓
+Role Permission
+ ↓
+Project Scope
+ ↓
+Object-Level Permission
+ ↓
+Database Query
+```
+
+A user must not gain access to another employee/project/document by manually changing an ID in a URL or API request.
+
+---
+
+# 15. Role-Based Access
+
+Maintain strict permissions.
+
+### Employee
+
+Can:
+
+* Submit Leave
+* Submit Permission
+* Submit WFH
+* View own balance
+* View own LOP warning
+* View own attendance
+* View own documents
+* Download own documents
+* View own request status
+
+### PL
+
+Can:
+
+* View assigned team
+* Approve/reject where configured
+* View team attendance
+* View team leave
+* View team WFH
+* View team analytics
+
+### PM
+
+Can:
+
+* Manage assigned projects
+* Manage assigned PLs
+* Manage project employees
+* View project attendance
+* View leave
+* View permission
+* View WFH
+* Approve requests
+* Handle pending approvals
+* View leave analytics
+* View escalated requests
+
+### GM
+
+Can:
+
+* Create projects
+* Assign PMs
+* Assign PLs
+* View project teams
+* View attendance
+* View leave
+* View WFH
+* View permission
+* Approve escalated requests
+* View project analytics
+* View leave analytics
+
+A GM should only have access to projects owned/created by that GM unless explicitly granted additional access.
+
+### HR/Admin
+
+Full organization-wide access according to existing HRMS permissions.
+
+---
+
+# 16. Dashboard Improvements
+
+### Employee Dashboard
+
+Show:
+
+```text
+Leave Balance
+Used This Month
+Pending Leave
+LOP Warning
+Attendance
+My Documents
+Pending Requests
+```
+
+### PM Dashboard
+
+Show:
+
+```text
+My Projects
+Team Size
+Present Today
+Absent Today
+Pending Approvals
+Escalated Requests
+Leave This Month
+LOP Days
+Leave Analytics
+```
+
+### GM Dashboard
+
+Show:
+
+```text
+My Projects
+Total PMs
+Total PLs
+Total Employees
+Present Today
+Absent Today
+Pending Approvals
+Escalated Approvals
+Leave Analytics
+Project Analytics
+```
+
+### HR Dashboard
+
+Show organization-wide:
+
+```text
+Employees
+Attendance
+Leave
+LOP
+Pending Approvals
+Escalations
+Absence Alerts
+Projects
+Documents
+Leave Analytics
+```
+
+---
+
+# 17. Data Integrity and Security
+
+Do not solve access control only in templates.
+
+Every view/API must enforce permissions.
+
+For example:
+
+```text
+GM 1 requests Project B
+        ↓
+Backend checks project.gm
+        ↓
+Project B belongs to GM 2
+        ↓
+ACCESS DENIED
+```
+
+Likewise:
+
+```text
+Employee A requests Employee B's document
+        ↓
+Backend checks document.employee
+        ↓
+Not owner
+        ↓
+ACCESS DENIED
+```
+
+Never trust IDs submitted from the browser.
+
+Use authenticated, server-side authorization for:
+
+* Projects
+* Employees
+* Leave
+* Permission
+* WFH
+* Documents
+* Attendance
+* Reports
+* Downloads
+
+---
+
+# 18. Audit Logs
+
+Create/extend audit logging for important actions:
+
+* Leave submitted
+* Leave approved
+* Leave rejected
+* Leave escalated
+* Permission submitted
+* Permission approved
+* WFH submitted
+* WFH approved
+* Project created
+* GM assigned
+* PM assigned
+* PL assigned
+* Employee assigned
+* Project reassigned
+* Document uploaded
+* Document downloaded
+* Absence alert generated
+* Absconding email sent
+
+Record:
+
+* user
+* action
+* object
+* timestamp
+* IP if existing architecture supports it
+* relevant description
+
+---
+
+# 19. Acceptance Tests
+
+Before declaring the implementation complete, test the following.
+
+## Test A — Leave category
+
+Employee submits:
+
+```text
+Category: Sick Leave
+Days: 2
+```
+
+The manager must see Sick Leave in the approval request.
+
+## Test B — Leave balance
+
+Employee has:
+
+```text
+Balance: 1 day
+```
+
+Employee requests:
+
+```text
+3 days
+```
+
+The system must clearly warn:
+
+```text
+1 day covered by leave
+2 days may become LOP
+```
+
+## Test C — PM escalation
+
+```text
+Employee → PM
+```
+
+PM does not respond before SLA.
+
+Request automatically appears for GM.
+
+## Test D — Multiple GMs, same PM
+
+```text
+GM 1 → Project A → PM 1
+GM 2 → Project B → PM 1
+GM 3 → Project C → PM 1
+```
+
+PM 1 must see A, B and C.
+
+GM 1 must only see A.
+
+GM 2 must only see B.
+
+GM 3 must only see C.
+
+## Test E — Correct escalation
+
+Project A:
+
+```text
+GM 1 → PM 1 → Employee A
+```
+
+Project B:
+
+```text
+GM 2 → PM 1 → Employee B
+```
+
+Employee A escalation must go to GM 1.
+
+Employee B escalation must go to GM 2.
+
+Never mix the two.
+
+## Test F — Documents
+
+HR uploads an Experience Letter for Employee A.
+
+Employee A can download it.
+
+Employee B cannot access it.
+
+## Test G — Unauthorized absence
+
+Employee has more than 3 consecutive unauthorized working days.
+
+System creates an absence alert and sends the configured email.
+
+No duplicate emails should be generated for the same open incident.
+
+## Test H — Mobile
+
+Open the website on a phone-sized viewport.
+
+Display:
+
+```text
+Desktop Access Required
+```
+
+Do not expose a broken desktop dashboard.
+
+## Test I — Security
+
+Try manually changing:
+
+```text
+/project/123/
+```
+
+to:
+
+```text
+/project/124/
+```
+
+The backend must verify ownership/permission and reject unauthorized access.
+
+---
+
+# Final Architecture Goal
+
+The HRMS should support a flexible organization where the same PM can manage projects belonging to different GMs.
+
+The core project relationship is:
+
+```text
+GM
+ ↓
+Project
+ ↓
+PM
+ ↓
+PL
+ ↓
+Employees
+```
+
+But a PM can appear in multiple project chains:
+
+```text
+GM 1 → Project A → PM 1
+GM 1 → Project B → PM 1
+
+GM 2 → Project C → PM 1
+
+GM 3 → Project D → PM 1
+```
+
+Approval escalation must follow the project-specific chain:
+
+```text
+Employee
+ ↓
+Reporting Manager
+ ↓
+PM
+ ↓
+GM responsible for that project
+```
+
+Leave requests must support categories, balance tracking, LOP warnings, approval escalation and analytics.
+
+HR must be able to send confidential employee documents.
+
+Unauthorized absence of more than 3 consecutive working days must trigger an HR/management alert and email.
+
+The application should be optimized for laptop/desktop use, while security must be enforced server-side rather than relying on hiding browser developer tools.
+
+Before changing the code, inspect the existing implementation and identify which existing models/features can be extended. Avoid duplicate functionality and preserve all existing working HRMS features.
