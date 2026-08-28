@@ -15,6 +15,7 @@
 
 Django==6.0.8
 gunicorn
+PyMySQL
 django-crispy-forms==2.7
 crispy-bootstrap5==2026.3
 django-celery-beat==2.9.0
@@ -35,7 +36,7 @@ wcwidth==0.8.2
 python-crontab==3.3.0
 cron-descriptor==1.4.5
 
-mysqlclient
+
 
 # Files / exports
 openpyxl==3.1.5
