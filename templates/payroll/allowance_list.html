@@ -1,0 +1,91 @@
+{% extends 'core/base.html' %}
+{% block content %}
+<div class="page-header">
+  <h1>Allowances &mdash; {{ month_name }} {{ year }}</h1>
+  <a href="{% url 'payroll:download_allowance_excel' cycle.id %}" class="btn btn-outline btn-sm">Export Excel</a>
+</div>
+
+<div class="card" style="margin-bottom:16px;">
+  <form method="get" style="display:flex; gap:10px; align-items:flex-end;">
+    <div>
+      <label>Month</label>
+      <select name="month">
+        {% for m, name in months %}
+        <option value="{{ m }}" {% if m == month %}selected{% endif %}>{{ name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label>Year</label>
+      <select name="year">
+        {% for y in years %}
+        <option value="{{ y }}" {% if y == year %}selected{% endif %}>{{ y }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button type="submit" class="btn btn-primary btn-sm">Go</button>
+  </form>
+</div>
+
+{% if pending_pm_hr_count %}
+<div class="card" style="margin-bottom:16px; background:#FFF4E5; border:1px solid #F5A623; color:#8A5A00;">
+  {{ pending_pm_hr_count }} allowance request{{ pending_pm_hr_count|pluralize }} still awaiting approval for {{ month_name }} {{ year }} &mdash;
+  <a href="{% url 'payroll:allowance_request_approvals' %}" style="color:#8A5A00; text-decoration:underline;">review requests</a>.
+</div>
+{% endif %}
+
+<div class="card">
+  <table>
+    <tr>
+      <th>Name</th><th>Project</th><th>Attendance Bonus</th><th>Travel</th>
+      <th>Internet</th><th>Incentive</th><th>Night Shift</th><th>Grand Total</th>
+      <th>Cleared</th><th></th>
+    </tr>
+    {% for row in rows %}
+    <tr>
+      <td>{{ row.user.get_full_name|default:row.user.username }}</td>
+      <td>{{ row.allowance.project|default:"-" }}</td>
+      <td>{{ row.allowance.attendance_bonus }}</td>
+      <td>{{ row.allowance.travel_allowance }}</td>
+      <td>{{ row.allowance.internet_allowance }}</td>
+      <td>{{ row.allowance.incentive }}</td>
+      <td>{{ row.allowance.night_shift_allowance }}</td>
+      <td><strong>{{ row.allowance.grand_total }}</strong></td>
+      <td>
+        {% if row.allowance.cleared_date %}
+          <span class="badge badge-success">{{ row.allowance.cleared_date|date:"d M Y" }}</span>
+        {% else %}
+          <span class="badge badge-warning">Pending</span>
+        {% endif %}
+      </td>
+      <td><a href="{% url 'payroll:edit_allowance' cycle.id row.user.id %}" class="btn btn-outline btn-sm">Edit</a></td>
+    </tr>
+    {% empty %}<tr><td colspan="10" class="empty-state">No approved allowances for {{ month_name }} {{ year }} yet.</td></tr>{% endfor %}
+  </table>
+</div>
+
+{% if employees_without_row %}
+<div class="card" style="margin-top:16px;">
+  <h3 style="margin-top:0;">Add an allowance manually</h3>
+  <div style="display:flex; gap:10px; align-items:flex-end;">
+    <div>
+      <label>Employee</label>
+      <select id="add-allowance-user">
+        <option value="">Select employee&hellip;</option>
+        {% for emp in employees_without_row %}
+        <option value="{{ emp.id }}">{{ emp.get_full_name|default:emp.username }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button type="button" class="btn btn-primary btn-sm" onclick="goToAddAllowance()">Add</button>
+  </div>
+</div>
+<script>
+function goToAddAllowance() {
+  var sel = document.getElementById('add-allowance-user');
+  if (!sel.value) return;
+  window.location.href = '/payroll/allowances/{{ cycle.id }}/' + sel.value + '/edit/';
+}
+</script>
+{% endif %}
+{% endblock %}

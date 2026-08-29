@@ -1,0 +1,133 @@
+from django.shortcuts import render, redirect, get_object_or_404
+from django.contrib.auth.decorators import login_required
+from django.contrib import messages
+
+from core.decorators import hr_only_required, role_required
+from core.models import User
+
+from queries.models import EmployeeQuery, QueryMessage
+from queries.forms import EmployeeQueryForm, QueryMessageForm
+
+
+@login_required
+def my_queries(request):
+    active_branch = getattr(request, 'active_branch', None)
+    if request.method == 'POST':
+        form = EmployeeQueryForm(request.POST, acting_user=request.user, active_branch=active_branch)
+        if form.is_valid():
+            query = form.save(commit=False)
+            query.user = request.user
+            query.save()
+            QueryMessage.objects.create(query=query, sender=request.user, text=query.message)
+            messages.success(request, f"Your query has been sent to {query.recipient_user}.")
+            return redirect('queries:my_queries')
+    else:
+        form = EmployeeQueryForm(acting_user=request.user, active_branch=active_branch)
+
+    my_queries_qs = EmployeeQuery.objects.filter(user=request.user).select_related('recipient_user')
+
+    hr_qs = User.objects.filter(role='SENIOR_HR')
+    branch_hr_qs = User.objects.filter(role='HR')
+    manager_qs = User.objects.filter(role__in=['MANAGER', 'PROJECT_MANAGER', 'GENERAL_MANAGER'])
+    if active_branch:
+        branch_hr_qs = branch_hr_qs.filter(branch=active_branch)
+        manager_qs = manager_qs.filter(branch=active_branch)
+    hr_qs = (hr_qs | branch_hr_qs).distinct()
+
+    users_by_role = {
+        'ADMIN': list(User.objects.filter(role='ADMIN').exclude(id=request.user.id).values('id', 'first_name', 'last_name', 'username')),
+        'HR': list(hr_qs.exclude(id=request.user.id).values('id', 'first_name', 'last_name', 'username')),
+        'MANAGER': list(manager_qs.exclude(id=request.user.id).values('id', 'first_name', 'last_name', 'username')),
+    }
+    for role_users in users_by_role.values():
+        for u in role_users:
+            u['display'] = (f"{u['first_name']} {u['last_name']}".strip() or u['username'])
+
+    return render(request, 'queries/my_queries.html', {
+        'form': form, 'my_queries': my_queries_qs, 'users_by_role': users_by_role,
+    })
+
+
+@login_required
+def query_thread(request, query_id):
+    query = get_object_or_404(EmployeeQuery.objects.select_related('user', 'recipient_user'), id=query_id)
+
+    if not query.can_be_accessed_by(request.user):
+        messages.error(request, "You do not have access to this query.")
+        return redirect('core:dashboard')
+
+    is_owner = request.user.id == query.user_id
+
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        if action == 'send_message' and query.status == 'OPEN':
+            msg_form = QueryMessageForm(request.POST)
+            if msg_form.is_valid():
+                msg = msg_form.save(commit=False)
+                msg.query = query
+                msg.sender = request.user
+                msg.save()
+            return redirect('queries:query_thread', query_id=query.id)
+        elif action == 'resolve' and not is_owner and query.status == 'OPEN':
+            query.close()
+            messages.success(request, "Query marked as resolved.")
+            return redirect('queries:query_thread', query_id=query.id)
+        elif action == 'reopen' and is_owner and query.status == 'CLOSED':
+            query.reopen()
+            messages.info(request, "Query reopened.")
+            return redirect('queries:query_thread', query_id=query.id)
+
+    msg_form = QueryMessageForm()
+    thread_messages = query.messages.select_related('sender')
+    can_show_resolve = (not is_owner) and query.status == 'OPEN'
+    can_show_reopen = is_owner and query.status == 'CLOSED'
+
+    return render(request, 'queries/query_thread.html', {
+        'query': query, 'thread_messages': thread_messages, 'msg_form': msg_form,
+        'is_owner': is_owner, 'can_show_resolve': can_show_resolve, 'can_show_reopen': can_show_reopen,
+    })
+
+
+@login_required
+def delete_query(request, query_id):
+    query = get_object_or_404(EmployeeQuery, id=query_id, user=request.user)
+    if request.method == 'POST':
+        query.delete()
+        messages.success(request, "Query deleted.")
+    return redirect('queries:my_queries')
+
+
+def _inbox(request, recipient_role, page_title, manager_only=False):
+    status_filter = request.GET.get('status', '')
+    if manager_only:
+        qs = EmployeeQuery.objects.filter(recipient_role='MANAGER', recipient_user=request.user)
+    else:
+        qs = EmployeeQuery.objects.filter(recipient_role=recipient_role)
+        if recipient_role == 'HR':
+            active_branch = getattr(request, 'active_branch', None)
+            if active_branch:
+                qs = qs.filter(user__branch=active_branch)
+    qs = qs.select_related('user', 'recipient_user')
+    if status_filter:
+        qs = qs.filter(status=status_filter)
+    return render(request, 'queries/query_inbox.html', {
+        'queries': qs, 'selected_status': status_filter, 'page_title': page_title,
+    })
+
+
+@hr_only_required
+def hr_queries(request):
+    return _inbox(request, 'HR', 'Employee Queries — HR')
+
+
+@role_required('ADMIN')
+def admin_queries(request):
+    return _inbox(request, 'ADMIN', 'Employee Queries — Admin')
+
+
+@login_required
+def manager_queries(request):
+    if not request.user.is_manager():
+        messages.error(request, "Only Managers can view this page.")
+        return redirect('core:dashboard')
+    return _inbox(request, 'MANAGER', 'Employee Queries — My Team', manager_only=True)

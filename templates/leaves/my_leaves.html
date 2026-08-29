@@ -1,0 +1,179 @@
+{% extends 'core/base.html' %}
+{% block content %}
+<div class="page-header"><h1>Permission / Leave / WFH</h1></div>
+
+<div class="card">
+  <div class="tabs" id="request-type-tabs">
+    <button type="button" class="tab-btn active" data-type="PERMISSION" onclick="setRequestType('PERMISSION')">Permission</button>
+    <button type="button" class="tab-btn" data-type="LEAVE" onclick="setRequestType('LEAVE')">Leave</button>
+    <button type="button" class="tab-btn" data-type="WFH" onclick="setRequestType('WFH')">Work From Home</button>
+  </div>
+
+  <form method="post" id="request-form">
+    {% csrf_token %}
+    <input type="hidden" name="request_type" id="request-type-input" value="PERMISSION">
+
+    
+    
+      
+
+    <div id="permission-fields">
+      <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:0 20px;">
+        <div><label>Date</label><input type="date" name="permission_date" class="form-control"></div>
+        <div><label>From Time</label><input type="time" name="from_time" class="form-control"></div>
+        <div><label>To Time</label><input type="time" name="to_time" class="form-control"></div>
+      </div>
+      <label>Number of Hours</label>
+      <input type="number" step="0.5" min="0" name="num_hours" class="form-control" placeholder="e.g. 2">
+    </div>
+
+    <div id="leave-fields" style="display:none;">
+      <label>Leave Category</label>
+      <select name="leave_type" id="leave-category" class="form-control">
+        <option value="">-- Select Category --</option>
+        {% for code, name in leave_types %}
+        <option value="{{ code }}">{{ name }}</option>
+        {% endfor %}
+      </select>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:0 20px;">
+        <div><label>Leave Duration - From</label><input type="date" name="start_date" id="leave-start" class="form-control"></div>
+        <div><label>Leave Duration - To</label><input type="date" name="end_date" id="leave-end" class="form-control"></div>
+      </div>
+      <p style="color:var(--grey-700); font-size:0.85rem; margin-top:-8px;">Number of days on leave: <strong id="leave-days-preview">-</strong></p>
+      
+      <!-- LOP WARNING -->
+      <div id="lop-warning-container" style="display:none; background:#FFF3CD; border:1px solid #FFEEBA; padding:15px; border-radius:6px; margin-bottom:15px; color:#856404;">
+        <strong style="display:block; margin-bottom:5px;">⚠ Leave Balance Warning</strong>
+        <div id="lop-warning-text"></div>
+      </div>
+      
+      <!-- LOP DETAILS (Table format) -->
+      <div id="leave-details-container" style="display:none; background:#E2E3E5; padding:15px; border-radius:6px; margin-bottom:15px; font-family:monospace; white-space:pre;">
+      </div>
+    </div>
+
+    <div id="wfh-fields" style="display:none;">
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:0 20px;">
+        <div><label>Work From Home - From</label><input type="date" name="start_date" id="wfh-start" class="form-control"></div>
+        <div><label>Work From Home - To</label><input type="date" name="end_date" id="wfh-end" class="form-control"></div>
+      </div>
+      <p style="color:var(--grey-700); font-size:0.85rem; margin-top:-8px;">This does not draw down your leave balance — it just routes to your manager/HR for approval, same as a leave request.</p>
+    </div>
+
+    <label>Attachment (Optional)</label>
+    <input type="file" name="attachment" class="form-control">
+
+    <label>Reason</label>
+    <textarea name="reason" class="form-control" rows="2"></textarea>
+
+    <button type="submit" class="btn btn-primary" id="submit-btn">Submit</button>
+  </form>
+</div>
+
+<div class="card">
+  <h3>My Requests</h3>
+  <table>
+    <tr><th>Type</th><th>Details</th><th>Reason</th><th>Status</th></tr>
+    {% for r in requests %}
+    <tr>
+      <td>{{ r.get_request_type_display }}</td>
+      <td>
+        {% if r.request_type == 'PERMISSION' %}
+          {{ r.permission_date }} &middot; {{ r.from_time|time:"h:i A"|default:"-" }} - {{ r.to_time|time:"h:i A"|default:"-" }}
+          {% if r.num_hours %}({{ r.num_hours }} hrs){% endif %}
+        {% elif r.request_type == 'WFH' %}
+          {{ r.start_date }} - {{ r.end_date }} ({{ r.num_days }} day{{ r.num_days|pluralize }})
+        {% else %}
+          {{ r.category.name|default:r.get_leave_type_display }} &middot; {{ r.start_date }} - {{ r.end_date }} ({{ r.num_days }} day{{ r.num_days|pluralize }})
+          {% if r.lop_days > 0 %} <br><small style="color:red;">{{ r.lop_days }} LOP Days</small>{% endif %}
+        {% endif %}
+      </td>
+      <td>{{ r.reason|default:"-"|truncatewords:10 }}</td>
+     <td>
+        {% if r.status == 'APPROVED' %}<span class="badge badge-success">Approved</span>
+        {% elif r.status == 'REJECTED' %}<span class="badge badge-danger">Rejected</span>
+        {% elif r.status == 'PENDING_HR' %}<span class="badge badge-warning">Pending HR</span>
+        {% elif r.status == 'PENDING_COO' %}<span class="badge badge-warning">Pending COO</span>
+        {% elif r.status == 'HR_REJECTED_PENDING_MANAGER' %}<span class="badge badge-warning">HR Declined - Awaiting Manager</span>
+        {% elif r.status == 'PENDING_MANAGER' %}<span class="badge badge-warning">{{ r.pending_approver_label }}</span>
+        {% else %}<span class="badge badge-warning">{{ r.get_status_display }}</span>{% endif %}
+      </td>
+    </tr>
+    {% empty %}<tr><td colspan="4" class="empty-state">No requests yet.</td></tr>{% endfor %}
+  </table>
+</div>
+
+<script>
+function setRequestType(type) {
+  document.getElementById('request-type-input').value = type;
+  document.querySelectorAll('#request-type-tabs .tab-btn').forEach(function (btn) {
+    btn.classList.toggle('active', btn.dataset.type === type);
+  });
+  var groups = {
+    PERMISSION: document.getElementById('permission-fields'),
+    LEAVE: document.getElementById('leave-fields'),
+    WFH: document.getElementById('wfh-fields')
+  };
+  Object.keys(groups).forEach(function (key) {
+    var el = groups[key];
+    var active = (key === type);
+    el.style.display = active ? '' : 'none';
+    // Disable inputs in inactive groups so duplicate-named fields (e.g.
+    // start_date/end_date shared between Leave and WFH) don't overwrite
+    // the active group's values on submit.
+    el.querySelectorAll('input, select').forEach(function (input) {
+      input.disabled = !active;
+    });
+  });
+}
+(function () {
+  var s = document.getElementById('leave-start'), 
+      e = document.getElementById('leave-end'),
+      c = document.getElementById('leave-category');
+  var preview = document.getElementById('leave-days-preview');
+  var warningBox = document.getElementById('lop-warning-container');
+  var warningText = document.getElementById('lop-warning-text');
+  var detailsBox = document.getElementById('leave-details-container');
+  var submitBtn = document.getElementById('submit-btn');
+
+  function update() {
+    warningBox.style.display = 'none';
+    detailsBox.style.display = 'none';
+    submitBtn.disabled = false;
+
+    if (s.value && e.value) {
+      var days = Math.round((new Date(e.value) - new Date(s.value)) / 86400000) + 1;
+      preview.textContent = days > 0 ? days : '-';
+      
+      if (days > 0 && c.value) {
+          // Check balance API
+          fetch(`/leaves/api/check_balance/?leave_type=${c.value}&start_date=${s.value}&end_date=${e.value}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) return;
+                
+                var details = `Available Balance: ${data.available_balance} days\nUsed This Month: ${data.used_this_month} days\nPending: ${data.pending} days\nRequested: ${data.requested} days\n\nRemaining after request: ${data.remaining_after_request} days`;
+                detailsBox.textContent = details;
+                detailsBox.style.display = 'block';
+
+                if (data.lop_days > 0) {
+                    var covered = data.requested - data.lop_days;
+                    var warnMsg = `You are requesting ${data.requested} days.\n`;
+                    if (covered > 0) warnMsg += `${covered} day(s) covered by leave.\n`;
+                    warnMsg += `The additional ${data.lop_days} day(s) will be treated as Loss of Pay (LOP).`;
+                    warningText.innerText = warnMsg;
+                    warningBox.style.display = 'block';
+                }
+            });
+      }
+    } else {
+      preview.textContent = '-';
+    }
+  }
+  s.addEventListener('change', update);
+  e.addEventListener('change', update);
+  c.addEventListener('change', update);
+})();
+setRequestType('PERMISSION');
+</script>
+{% endblock %}

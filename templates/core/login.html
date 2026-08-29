@@ -1,0 +1,107 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" type="image/png" href="{% static 'images/logo1.png' %}">
+  <title>Login - SPS HRMS</title>
+  <link rel="stylesheet" href="{% static 'css/style.css' %}">
+</head>
+<body>
+  <div class="login-wrap">
+    <div>
+      <div class="login-hero">
+        <img src="{% static 'images/signuplogo.png' %}" alt="SPS HRMS">
+      </div>
+      <div class="login-card">
+        <div class="login-accent"></div>
+        <h1>Welcome back</h1>
+        <p class="subtitle">Sign in to your account</p>
+        {% if form.errors %}
+          <ul class="messages"><li class="error">Invalid username or password.</li></ul>
+        {% endif %}
+        <form method="post" id="login-form">
+          {% csrf_token %}
+          <label>Username</label>
+          {{ form.username }}
+          <label>Password</label>
+          <div class="password-field-wrap">
+            {{ form.password }}
+            <button type="button" class="password-toggle-btn" id="password-toggle" aria-label="Show password">
+              <svg id="eye-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+              <svg id="eye-off-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;">
+                <path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a18.7 18.7 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+                <line x1="1" y1="1" x2="23" y2="23"/>
+              </svg>
+            </button>
+          </div>
+          <label style="display:flex; align-items:center; gap:8px; font-weight:500; margin-bottom:14px; cursor:pointer;">
+            <input type="checkbox" id="remember-me" style="width:auto; margin:0;">
+            Remember Me
+          </label>
+          <button type="submit" class="btn btn-primary" style="width:100%; justify-content:center;">Sign In</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</body>
+<script>
+  (function () {
+    var toggleBtn = document.getElementById('password-toggle');
+    var passwordInput = document.getElementById('id_password');
+    var usernameInput = document.getElementById('id_username');
+    var rememberCheckbox = document.getElementById('remember-me');
+    var loginForm = document.getElementById('login-form');
+    var eyeIcon = document.getElementById('eye-icon');
+    var eyeOffIcon = document.getElementById('eye-off-icon');
+
+    var STORAGE_KEY = 'prostaff_remember_me';
+
+    // Show/hide password.
+    if (toggleBtn && passwordInput) {
+      toggleBtn.addEventListener('click', function () {
+        var isPassword = passwordInput.type === 'password';
+        passwordInput.type = isPassword ? 'text' : 'password';
+        eyeIcon.style.display = isPassword ? 'none' : 'block';
+        eyeOffIcon.style.display = isPassword ? 'block' : 'none';
+        toggleBtn.setAttribute('aria-label', isPassword ? 'Hide password' : 'Show password');
+      });
+    }
+
+    // On page load, prefill username/password if they were previously
+    // remembered, and tick the checkbox so it reflects that state.
+    try {
+      var saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+      if (saved && saved.username) {
+        usernameInput.value = saved.username;
+        passwordInput.value = saved.password || '';
+        rememberCheckbox.checked = true;
+      }
+    } catch (e) {
+      // Ignore malformed/unavailable storage.
+    }
+
+    // On submit, save or clear the credentials depending on the checkbox.
+    if (loginForm) {
+      loginForm.addEventListener('submit', function () {
+        try {
+          if (rememberCheckbox.checked) {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify({
+              username: usernameInput.value,
+              password: passwordInput.value,
+            }));
+          } else {
+            localStorage.removeItem(STORAGE_KEY);
+          }
+        } catch (e) {
+          // Ignore storage errors (e.g. private browsing mode).
+        }
+      });
+    }
+  })();
+</script>
+</html>

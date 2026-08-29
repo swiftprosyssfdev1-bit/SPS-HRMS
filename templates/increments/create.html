@@ -1,0 +1,366 @@
+{% extends 'core/base.html' %}
+{% block content %}
+<div class="page-header"><h1>New Increment Request</h1></div>
+
+<div class="card">
+  <div class="tabs" id="increment-tabs">
+    <button type="button" class="tab-btn {% if active_tab != 'manager' %}active{% endif %}" data-tab="employee" onclick="setIncrementTab('employee')">Employee</button>
+    <button type="button" class="tab-btn {% if active_tab == 'manager' %}active{% endif %}" data-tab="manager" onclick="setIncrementTab('manager')">Manager</button>
+  </div>
+
+  <!-- ================= EMPLOYEE TAB ================= -->
+  <div id="employee-tab-panel" style="{% if active_tab == 'manager' %}display:none;{% endif %}">
+    {% if form.errors %}
+    <ul class="messages"><li class="error">Please fix the highlighted fields below.</li></ul>
+    {% endif %}
+    <form method="post" id="increment-form">
+      {% csrf_token %}
+      <input type="hidden" name="form_type" value="employee">
+      <label>Employee Name</label>
+      <div class="multi-check-dropdown" id="employee-multi-dropdown">
+        <button type="button" class="form-control multi-check-toggle" onclick="toggleMultiDropdown('employee')">
+          <span id="employee-selected-summary">-- Select employees --</span>
+          <span class="multi-check-arrow">&#9662;</span>
+        </button>
+        <div class="multi-check-panel" id="employee-multi-panel">
+          {% for checkbox in form.user %}
+            <label class="multi-check-item">{{ checkbox.tag }} {{ checkbox.choice_label }}</label>
+          {% endfor %}
+        </div>
+      </div>
+      {% if form.user.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:4px 0 10px;">{{ form.user.errors.0 }}</p>{% endif %}
+
+      <div id="feedback-manager-wrap" style="display:none;">
+        <label>Project Manager (for Feedback)</label>
+        {{ form.feedback_manager }}
+        <p style="color:var(--grey-500); font-size:0.8rem; margin-top:-8px;">
+          Auto-filled from the employee's currently assigned project. This Project Manager will review performance and suggest an increment percentage.
+        </p>
+        {% if form.feedback_manager.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ form.feedback_manager.errors.0 }}</p>{% endif %}
+      </div>
+
+      <div id="no-feedback-note" style="display:none;">
+        <p style="color:var(--grey-500); font-size:0.8rem; margin:-8px 0 14px;">
+          No Project Manager feedback is needed for a Manager or Admin — you'll be able to decide right away from the Increments list.
+        </p>
+      </div>
+
+      <div id="employee-batch-note" style="display:none;">
+        <p style="color:var(--grey-500); font-size:0.8rem; margin:-8px 0 14px;">
+          Multiple employees selected — each one's own current basic salary and assigned Project Manager will be used automatically. Effective date, expected salary, and notes below apply to all of them.
+        </p>
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:0 20px;" id="current-basic-row">
+        <div>
+          <label>Current Basic Salary</label>
+          {{ form.current_basic }}
+          <p style="color:var(--grey-500); font-size:0.78rem; margin-top:-10px;" id="current-basic-hint">Auto-filled from the employee's salary structure — you can type a different value if needed.</p>
+          {% if form.current_basic.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ form.current_basic.errors.0 }}</p>{% endif %}
+        </div>
+        <div>
+          <label>Effective Date</label>
+          {{ form.effective_date }}
+          {% if form.effective_date.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ form.effective_date.errors.0 }}</p>{% endif %}
+        </div>
+      </div>
+      <label>{{ form.requested_basic.label }}</label>
+      {{ form.requested_basic }}
+      <p style="color:var(--grey-500); font-size:0.78rem; margin-top:-10px;">{{ form.requested_basic.help_text }} <span id="requested-basic-percent" style="font-weight:600; color:#1D9A55;"></span></p>
+      {% if form.requested_basic.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ form.requested_basic.errors.0 }}</p>{% endif %}
+      <label>Reason for Increment</label>
+      {{ form.reason }}
+      <button type="submit" class="btn btn-primary" id="increment-submit-btn">Send for Feedback</button>
+    </form>
+
+    {{ user_roles_json|json_script:"user-roles-data" }}
+    {{ user_basic_json|json_script:"user-basic-data" }}
+    {{ user_manager_json|json_script:"user-manager-data" }}
+    {{ user_names_json|json_script:"user-names-data" }}
+    <script>
+      (function () {
+        var ROLES = JSON.parse(document.getElementById('user-roles-data').textContent);
+        var BASICS = JSON.parse(document.getElementById('user-basic-data').textContent);
+        var MANAGERS = JSON.parse(document.getElementById('user-manager-data').textContent);
+        var NAMES = JSON.parse(document.getElementById('user-names-data').textContent);
+
+        var checkboxes = document.querySelectorAll('#employee-multi-panel input[type="checkbox"]');
+        var summarySpan = document.getElementById('employee-selected-summary');
+        var wrap = document.getElementById('feedback-manager-wrap');
+        var noFeedbackNote = document.getElementById('no-feedback-note');
+        var batchNote = document.getElementById('employee-batch-note');
+        var managerSelect = document.querySelector('#increment-form select[name="feedback_manager"]');
+        var submitBtn = document.getElementById('increment-submit-btn');
+        var currentBasicRow = document.getElementById('current-basic-row');
+        var currentBasicInput = document.querySelector('#increment-form input[name="current_basic"]');
+        var currentBasicHint = document.getElementById('current-basic-hint');
+        var requestedBasicInput = document.querySelector('#increment-form input[name="requested_basic"]');
+        var percentLabel = document.getElementById('requested-basic-percent');
+
+        function updateRequestedPercent() {
+          var cur = parseFloat(currentBasicInput.value);
+          var req = parseFloat(requestedBasicInput.value);
+          if (cur > 0 && req > 0) {
+            var pct = ((req - cur) / cur) * 100;
+            percentLabel.textContent = '(' + (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%)';
+          } else {
+            percentLabel.textContent = '';
+          }
+        }
+        requestedBasicInput.addEventListener('input', updateRequestedPercent);
+        currentBasicInput.addEventListener('input', updateRequestedPercent);
+
+        function selectedIds() {
+          return Array.from(checkboxes).filter(function (c) { return c.checked; }).map(function (c) { return c.value; });
+        }
+
+        function updateForEmployee() {
+          var ids = selectedIds();
+
+          if (ids.length === 0) {
+            summarySpan.textContent = '-- Select employees --';
+          } else if (ids.length === 1) {
+            summarySpan.textContent = NAMES[ids[0]] || '1 selected';
+          } else {
+            summarySpan.textContent = ids.length + ' employees selected';
+          }
+
+          if (ids.length === 1) {
+            var empId = ids[0];
+            var role = ROLES[empId];
+            currentBasicRow.style.display = '';
+            currentBasicInput.value = BASICS.hasOwnProperty(empId) ? BASICS[empId] : '';
+            currentBasicHint.textContent = "Auto-filled from the employee's salary structure — you can type a different value if needed.";
+            updateRequestedPercent();
+            batchNote.style.display = 'none';
+
+            if (role === 'EMPLOYEE') {
+              wrap.style.display = '';
+              noFeedbackNote.style.display = 'none';
+              submitBtn.textContent = 'Send for Feedback';
+              var mgrId = MANAGERS[empId];
+              if (managerSelect) managerSelect.value = mgrId ? String(mgrId) : '';
+            } else if (role) {
+              wrap.style.display = 'none';
+              if (managerSelect) managerSelect.value = '';
+              noFeedbackNote.style.display = '';
+              submitBtn.textContent = 'Create Increment';
+            } else {
+              wrap.style.display = 'none';
+              noFeedbackNote.style.display = 'none';
+              submitBtn.textContent = 'Send for Feedback';
+            }
+          } else if (ids.length > 1) {
+            currentBasicRow.style.display = 'none';
+            currentBasicInput.value = '';
+            wrap.style.display = 'none';
+            if (managerSelect) managerSelect.value = '';
+            noFeedbackNote.style.display = 'none';
+            batchNote.style.display = '';
+            submitBtn.textContent = 'Send for Feedback (' + ids.length + ' employees)';
+          } else {
+            currentBasicRow.style.display = '';
+            currentBasicInput.value = '';
+            wrap.style.display = 'none';
+            noFeedbackNote.style.display = 'none';
+            batchNote.style.display = 'none';
+            submitBtn.textContent = 'Send for Feedback';
+          }
+        }
+
+        checkboxes.forEach(function (cb) { cb.addEventListener('change', updateForEmployee); });
+        updateForEmployee();
+      })();
+    </script>
+  </div>
+
+  <!-- ================= MANAGER TAB ================= -->
+  <div id="manager-tab-panel" style="{% if active_tab != 'manager' %}display:none;{% endif %}">
+    {% if manager_form.errors %}
+    <ul class="messages"><li class="error">Please fix the highlighted fields below.</li></ul>
+    {% endif %}
+    <form method="post" enctype="multipart/form-data" id="manager-increment-form">
+      {% csrf_token %}
+      <input type="hidden" name="form_type" value="manager">
+      <label>Name</label>
+      <div class="multi-check-dropdown" id="manager-multi-dropdown">
+        <button type="button" class="form-control multi-check-toggle" onclick="toggleMultiDropdown('manager')">
+          <span id="manager-selected-summary">-- Select managers --</span>
+          <span class="multi-check-arrow">&#9662;</span>
+        </button>
+        <div class="multi-check-panel" id="manager-multi-panel">
+          {% for checkbox in manager_form.user %}
+            <label class="multi-check-item">{{ checkbox.tag }} {{ checkbox.choice_label }}</label>
+          {% endfor %}
+        </div>
+      </div>
+      {% if manager_form.user.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:4px 0 10px;">{{ manager_form.user.errors.0 }}</p>{% endif %}
+
+      <label>Role</label>
+      <input type="text" id="manager-role-display" class="form-control" readonly style="background:var(--grey-50);" value="-">
+
+      <div id="manager-batch-note" style="display:none;">
+        <p style="color:var(--grey-500); font-size:0.8rem; margin:-8px 0 14px;">
+          Multiple managers selected — each one's own current basic salary will be used automatically. The percentage, effective date, report, and notes below apply to all of them.
+        </p>
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:0 20px;" id="manager-current-basic-row">
+        <div>
+          <label>Current Basic Salary</label>
+          {{ manager_form.current_basic }}
+          <p style="color:var(--grey-500); font-size:0.78rem; margin-top:-10px;">Auto-filled from the manager's salary structure — you can type a different value if needed.</p>
+          {% if manager_form.current_basic.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ manager_form.current_basic.errors.0 }}</p>{% endif %}
+        </div>
+        <div>
+          <label>Effective Date</label>
+          {{ manager_form.effective_date }}
+          {% if manager_form.effective_date.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ manager_form.effective_date.errors.0 }}</p>{% endif %}
+        </div>
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:0 20px;">
+        <div>
+          <label>Increment Percentage (%)</label>
+          {{ manager_form.increment_percent }}
+          {% if manager_form.increment_percent.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ manager_form.increment_percent.errors.0 }}</p>{% endif %}
+        </div>
+        <div>
+          <label>Increment Amount</label>
+          <input type="text" id="manager-increment-amount" class="form-control" readonly style="background:var(--grey-50);" value="-">
+          <p style="color:var(--grey-500); font-size:0.78rem; margin-top:-10px;">Calculated automatically from Current Basic Salary &times; Increment Percentage.</p>
+        </div>
+      </div>
+
+      <label>Upload Report</label>
+      {{ manager_form.report_file }}
+      {% if manager_form.report_file.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ manager_form.report_file.errors.0 }}</p>{% endif %}
+
+      <label style="margin-top:14px;">Notes for COO (optional)</label>
+      {{ manager_form.reason }}
+
+      <button type="submit" class="btn btn-primary" style="margin-top:10px;">Send to COO for Approval</button>
+    </form>
+
+    {{ manager_role_json|json_script:"manager-role-data" }}
+    {{ manager_basic_json|json_script:"manager-basic-data" }}
+    {{ manager_names_json|json_script:"manager-names-data" }}
+    <script>
+      (function () {
+        var ROLES = JSON.parse(document.getElementById('manager-role-data').textContent);
+        var BASICS = JSON.parse(document.getElementById('manager-basic-data').textContent);
+        var NAMES = JSON.parse(document.getElementById('manager-names-data').textContent);
+
+        var checkboxes = document.querySelectorAll('#manager-multi-panel input[type="checkbox"]');
+        var summarySpan = document.getElementById('manager-selected-summary');
+        var batchNote = document.getElementById('manager-batch-note');
+        var currentBasicRow = document.getElementById('manager-current-basic-row');
+        var roleDisplay = document.getElementById('manager-role-display');
+        var currentBasicInput = document.querySelector('#manager-increment-form input[name="current_basic"]');
+        var percentInput = document.querySelector('#manager-increment-form input[name="increment_percent"]');
+        var amountDisplay = document.getElementById('manager-increment-amount');
+        var submitBtn = document.querySelector('#manager-increment-form button[type="submit"]');
+
+        function recalcAmount() {
+          var basic = parseFloat(currentBasicInput.value);
+          var percent = parseFloat(percentInput.value);
+          if (!isNaN(basic) && !isNaN(percent)) {
+            amountDisplay.value = (basic * percent / 100).toFixed(2);
+          } else {
+            amountDisplay.value = '-';
+          }
+        }
+
+        function selectedIds() {
+          return Array.from(checkboxes).filter(function (c) { return c.checked; }).map(function (c) { return c.value; });
+        }
+
+        function updateForManager() {
+          var ids = selectedIds();
+
+          if (ids.length === 0) {
+            summarySpan.textContent = '-- Select managers --';
+          } else if (ids.length === 1) {
+            summarySpan.textContent = NAMES[ids[0]] || '1 selected';
+          } else {
+            summarySpan.textContent = ids.length + ' managers selected';
+          }
+
+          if (ids.length === 1) {
+            var mgrId = ids[0];
+            roleDisplay.value = ROLES.hasOwnProperty(mgrId) ? ROLES[mgrId] : '-';
+            currentBasicRow.style.display = '';
+            currentBasicInput.value = BASICS.hasOwnProperty(mgrId) ? BASICS[mgrId] : '';
+            batchNote.style.display = 'none';
+            submitBtn.textContent = 'Send to COO for Approval';
+          } else if (ids.length > 1) {
+            roleDisplay.value = 'Multiple roles';
+            currentBasicRow.style.display = 'none';
+            currentBasicInput.value = '';
+            batchNote.style.display = '';
+            submitBtn.textContent = 'Send to COO for Approval (' + ids.length + ' managers)';
+          } else {
+            roleDisplay.value = '-';
+            currentBasicRow.style.display = '';
+            currentBasicInput.value = '';
+            batchNote.style.display = 'none';
+            submitBtn.textContent = 'Send to COO for Approval';
+          }
+          recalcAmount();
+        }
+
+        checkboxes.forEach(function (cb) { cb.addEventListener('change', updateForManager); });
+        currentBasicInput.addEventListener('input', recalcAmount);
+        percentInput.addEventListener('input', recalcAmount);
+        updateForManager();
+      })();
+    </script>
+  </div>
+</div>
+
+<script>
+  function setIncrementTab(tab) {
+    document.querySelectorAll('#increment-tabs .tab-btn').forEach(function (btn) {
+      btn.classList.toggle('active', btn.dataset.tab === tab);
+    });
+    document.getElementById('employee-tab-panel').style.display = (tab === 'employee') ? '' : 'none';
+    document.getElementById('manager-tab-panel').style.display = (tab === 'manager') ? '' : 'none';
+  }
+
+  function toggleMultiDropdown(which) {
+    var panel = document.getElementById(which + '-multi-panel');
+    var isOpen = panel.classList.contains('open');
+    document.querySelectorAll('.multi-check-panel').forEach(function (p) { p.classList.remove('open'); });
+    if (!isOpen) panel.classList.add('open');
+  }
+
+  document.addEventListener('click', function (e) {
+    document.querySelectorAll('.multi-check-dropdown').forEach(function (dd) {
+      if (!dd.contains(e.target)) {
+        dd.querySelector('.multi-check-panel').classList.remove('open');
+      }
+    });
+  });
+</script>
+
+<style>
+  .multi-check-dropdown { position: relative; margin-bottom: 4px; }
+  .multi-check-toggle {
+    display: flex; align-items: center; justify-content: space-between;
+    width: 100%; text-align: left; cursor: pointer; background: #fff;
+  }
+  .multi-check-arrow { color: var(--grey-500); margin-left: 8px; }
+  .multi-check-panel {
+    display: none; position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; right: 0;
+    max-height: 240px; overflow-y: auto; background: #fff; border: 1px solid var(--grey-200, #E2E8F0);
+    border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.12); padding: 6px 0;
+  }
+  .multi-check-panel.open { display: block; }
+  .multi-check-item {
+    display: flex; align-items: center; gap: 8px; padding: 8px 14px;
+    font-weight: 400; cursor: pointer; margin: 0;
+  }
+  .multi-check-item:hover { background: var(--grey-50, #F7F9FC); }
+  .multi-check-item input[type="checkbox"] { width: auto; margin: 0; }
+</style>
+{% endblock %}

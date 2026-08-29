@@ -1,0 +1,48 @@
+{% extends 'core/base.html' %}
+{% block title %}Your Assist — Analytics{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Your Assist — Chatbot Analytics</h1>
+  <button type="button" class="btn btn-outline btn-sm" onclick="history.back()">&larr; Back</button>
+</div>
+
+<div class="card">
+  <h3 style="margin-top:0;">Answer source breakdown</h3>
+  <p style="color:#666;">{{ total_questions }} question(s) asked in total.</p>
+  <table class="table" style="width:100%;">
+    <thead>
+      <tr><th>Source</th><th>Count</th></tr>
+    </thead>
+    <tbody>
+      {% for row in source_breakdown %}
+      <tr>
+        <td>{{ row.answer_source }}</td>
+        <td>{{ row.total }}</td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="2">No chatbot activity logged yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h3 style="margin-top:0;">Top unanswered questions</h3>
+  <p style="color:#666;">Questions the bot couldn't answer, most frequent first — good candidates for a new FAQ entry.</p>
+  <table class="table" style="width:100%;">
+    <thead>
+      <tr><th>Question</th><th>Times asked</th></tr>
+    </thead>
+    <tbody>
+      {% for row in top_unanswered %}
+      <tr>
+        <td>{{ row.question }}</td>
+        <td>{{ row.times_asked }}</td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="2">Nothing unanswered right now — nice.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

@@ -1,0 +1,293 @@
+{% extends 'core/base.html' %}
+{% block title %}Dashboard - SPS HRMS{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Welcome, {{ user.get_full_name|default:user.username }}</h1>
+    <p>Here's what's happening today.</p>
+  </div>
+  <div style="display:flex; align-items:center; gap:12px;">
+    {% if can_switch_branch %}
+    <form method="post" action="{% url 'core:set_active_branch' %}" style="margin:0;">
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{{ request.path }}">
+      <select name="branch_id" class="form-control" style="margin:0; min-width:200px;" onchange="this.form.submit()">
+        {% for b in all_branches %}
+        <option value="{{ b.id }}" {% if active_branch.id == b.id %}selected{% endif %}>{{ b.name }} ({{ b.code }})</option>
+        {% endfor %}
+      </select>
+    </form>
+    {% elif active_branch %}
+    <span class="badge badge-info">{{ active_branch.name }} ({{ active_branch.code }})</span>
+    {% endif %}
+
+    {% if user.role == 'HR' or user.role == 'SENIOR_HR' %}
+    <a href="{% url 'attendance:active_attendance_today' %}" class="btn btn-accent">Go to Attendance</a>
+    {% else %}
+    <a href="{% url 'attendance:punch' %}" class="btn btn-accent">Go to Attendance</a>
+    {% endif %}
+  </div>
+</div>
+
+{% if user.role == 'ADMIN' %}
+<div class="stat-grid">
+  <div class="stat-card"><div class="stat-value">{{ hr_count }}</div><div class="stat-label">Total HR</div></div>
+  <div class="stat-card"><div class="stat-value">{{ manager_count }}</div><div class="stat-label">Total Managers</div></div>
+  <div class="stat-card"><div class="stat-value">{{ employee_count }}</div><div class="stat-label">Total Employees</div></div>
+</div>
+<div class="card">
+  <h3>Quick Actions</h3>
+  <div class="punch-btns" style="justify-content:flex-start; flex-wrap:wrap;">
+    <a href="{% url 'employees:directory' %}" class="btn btn-primary">Employee Directory</a>
+    <a href="{% url 'projects:list' %}" class="btn btn-outline">Projects</a>
+  </div>
+</div>
+
+{% elif user.role == 'COO' %}
+<h3 style="margin:0 0 12px;">Today — Branch-wise Manpower</h3>
+<div class="card" style="overflow-x:auto;">
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Branch</th>
+        <th>Total Employees</th>
+        <th>Present Today</th>
+        <th>Absent Today</th>
+        <th>On Leave Today</th>
+        <th>Active Projects</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for stat in branch_stats %}
+      <tr>
+        <td>{{ stat.branch.name }} ({{ stat.branch.code }})</td>
+        <td>{{ stat.total_employees }}</td>
+        <td>{{ stat.present }}</td>
+        <td>{{ stat.absent }}</td>
+        <td>{{ stat.on_leave }}</td>
+        <td>{{ stat.active_projects }}</td>
+      </tr>
+      {% empty %}
+      <tr>
+        <td colspan="6">No branches found.</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin:24px 0 12px;">
+  <h3 style="margin:0;">This Month — Branch-wise Manpower</h3>
+  <form method="get" style="margin:0;">
+    <select name="month" class="form-control" style="margin:0; min-width:180px;" onchange="this.form.submit()">
+      {% for opt in month_options %}
+      <option value="{{ opt.value }}" {% if opt.value == selected_month %}selected{% endif %}>{{ opt.label }}</option>
+      {% endfor %}
+    </select>
+  </form>
+</div>
+<div class="card" style="overflow-x:auto;">
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Branch</th>
+        <th>Present</th>
+        <th>Absent</th>
+        <th>On Leave</th>
+        <th style="min-width:110px;">New Joiners</th>
+        <th style="min-width:130px;">Exited Employees</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for stat in branch_stats %}
+      <tr>
+        <td>{{ stat.branch.name }} ({{ stat.branch.code }})</td>
+        <td>{{ stat.present_month }}</td>
+        <td>{{ stat.absent_month }}</td>
+        <td>{{ stat.on_leave_month }}</td>
+        <td>
+          <div style="display:flex; align-items:center; gap:10px;">
+            <span>{{ stat.new_joiners }}</span>
+            {% if stat.new_joiners %}<a href="{% url 'employees:joiners_exits' %}?type=joiners&month={{ selected_month }}&branch={{ stat.branch.id }}" style="font-size:0.78rem; color:var(--electric-blue); font-weight:600; text-decoration:none; white-space:nowrap;">View &rarr;</a>{% endif %}
+          </div>
+        </td>
+        <td>
+          <div style="display:flex; align-items:center; gap:10px;">
+            <span>{{ stat.exited_employees }}</span>
+            {% if stat.exited_employees %}<a href="{% url 'employees:joiners_exits' %}?type=exited&month={{ selected_month }}&branch={{ stat.branch.id }}" style="font-size:0.78rem; color:var(--electric-blue); font-weight:600; text-decoration:none; white-space:nowrap;">View &rarr;</a>{% endif %}
+          </div>
+        </td>
+      </tr>
+      {% empty %}
+      <tr>
+        <td colspan="6">No branches found.</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h3>Quick Actions</h3>
+  <div class="punch-btns" style="justify-content:flex-start; flex-wrap:wrap;">
+    <a href="{% url 'employees:directory' %}" class="btn btn-primary">Employee Directory</a>
+    <a href="{% url 'projects:list' %}" class="btn btn-outline">Projects</a>
+  </div>
+</div>
+
+{% elif user.role == 'HR' or user.role == 'SENIOR_HR' %}
+<div class="stat-grid">
+  <div class="stat-card"><div class="stat-value">{{ total_employees }}</div><div class="stat-label">Total Employees</div></div>
+  <div class="stat-card"><div class="stat-value">{{ active_employees }}</div><div class="stat-label">Active</div></div>
+  <div class="stat-card"><div class="stat-value">{{ inactive_employees }}</div><div class="stat-label">Inactive</div></div>
+</div>
+
+<h3 style="margin:24px 0 12px;">Today</h3>
+<div class="stat-grid">
+  <div class="stat-card"><div class="stat-value">{{ present_today }}</div><div class="stat-label">Present Today</div></div>
+  <div class="stat-card orange"><div class="stat-value">{{ absent_today }}</div><div class="stat-label">Absent Today</div></div>
+  <div class="stat-card"><div class="stat-value">{{ on_leave_today }}</div><div class="stat-label">On Leave (With Permission)</div></div>
+</div>
+
+<h3 style="margin:24px 0 12px;">This Month</h3>
+<div class="stat-grid">
+  <div class="stat-card"><div class="stat-value">{{ present_month }}</div><div class="stat-label">Present (Month to Date)</div></div>
+  <div class="stat-card orange"><div class="stat-value">{{ absent_month }}</div><div class="stat-label">Absent (Month to Date)</div></div>
+  <div class="stat-card"><div class="stat-value">{{ on_leave_month }}</div><div class="stat-label">On Leave (Month to Date)</div></div>
+</div>
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-value">{{ new_joiners_count }}</div>
+    <div class="stat-label">New Joiners (This Month)</div>
+    <a href="{% url 'employees:joiners_exits' %}?type=joiners&month={{ current_month }}" style="display:inline-block; margin-top:8px; font-size:0.78rem; color:var(--electric-blue); font-weight:600; text-decoration:none;">View details &rarr;</a>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ exited_employees_count }}</div>
+    <div class="stat-label">Exited Employees (This Month)</div>
+    <a href="{% url 'employees:joiners_exits' %}?type=exited&month={{ current_month }}" style="display:inline-block; margin-top:8px; font-size:0.78rem; color:var(--electric-blue); font-weight:600; text-decoration:none;">View details &rarr;</a>
+  </div>
+</div>
+<div class="card">
+  <h3>Quick Actions</h3>
+  <div class="punch-btns" style="justify-content:flex-start; flex-wrap:wrap;">
+    <a href="{% url 'employees:onboard' %}" class="btn btn-primary">Onboard Employee</a>
+    <a href="{% url 'employees:directory' %}" class="btn btn-outline">Employee Directory</a>
+    <a href="{% url 'leaves:approvals' %}" class="btn btn-outline">Review Leave Requests</a>
+    <a href="{% url 'payroll:runs' %}" class="btn btn-outline">Payroll Runs</a>
+    <a href="{% url 'increments:create' %}" class="btn btn-outline">New Increment</a>
+  </div>
+</div>
+
+{% else %}
+<div class="stat-grid">
+  <div class="stat-card"><div class="stat-value">{{ month_attendance }}</div><div class="stat-label">Days Present This Month</div></div>
+
+  {% if is_gm_layout %}
+    <!-- GM/QA/CTO: no Pending Leave Requests card, no Team Members card -->
+  {% elif user.role == 'PROJECT_MANAGER' %}
+  <div class="stat-card orange"><div class="stat-value">{{ my_pending_leaves }}</div><div class="stat-label">My Pending Leave Requests</div></div>
+  <div class="stat-card"><div class="stat-value">{{ pm_project_count }}</div><div class="stat-label">Projects Currently Handling</div></div>
+  {% else %}
+  <div class="stat-card orange"><div class="stat-value">{{ my_pending_leaves }}</div><div class="stat-label">My Pending Leave Requests</div></div>
+  {% if user.role == 'MANAGER' %}
+  <div class="stat-card"><div class="stat-value">{{ team_size }}</div><div class="stat-label">Team Members</div></div>
+  {% endif %}
+  {% endif %}
+</div>
+
+<div class="card">
+  <h3>Today</h3>
+  {% if today_record and today_record.in_time %}
+    <p>Punched in at <strong>{{ today_record.in_time|time:"h:i A" }}</strong>{% if today_record.out_time %}, punched out at <strong>{{ today_record.out_time|time:"h:i A" }}</strong>{% endif %}.</p>
+  {% else %}
+    <p>You haven't punched in today.</p>
+  {% endif %}
+  <a href="{% url 'attendance:punch' %}" class="btn btn-primary">Open Attendance</a>
+</div>
+
+{% if show_leave_analytics and leave_analytics_json %}
+<div class="card">
+  <h3>Team Leave Analytics</h3>
+  {% if team_analytics_count %}
+  <p style="font-size: 0.9em; color: #666; margin-top: -10px; margin-bottom: 15px;">Aggregated leave usage for {{ team_analytics_count }} team member(s).</p>
+  {% endif %}
+  <div style="display:flex; flex-wrap:wrap; gap:20px;">
+    <div style="width:300px; height:300px; position:relative;">
+      <canvas id="leavePieChart"></canvas>
+    </div>
+    <div id="leave-legend" style="flex:1; min-width:200px; display:flex; flex-direction:column; justify-content:center;"></div>
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+    var analyticsData = {{ leave_analytics_json|safe }};
+    if (analyticsData && analyticsData.length > 0) {
+        var labels = [];
+        var usedData = [];
+        var bgColors = ['#4e73df', '#1cc88a', '#36b9cc', '#f6c23e', '#e74a3b', '#858796'];
+        
+        var legendHtml = '<table class="table" style="width:100%; border-collapse:collapse;"><tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:5px;">Category</th><th style="text-align:right; border-bottom:1px solid #ddd; padding:5px;">Team Used</th><th style="text-align:right; border-bottom:1px solid #ddd; padding:5px;">Team Remaining</th></tr>';
+        
+        var totalUsed = 0;
+        analyticsData.forEach(function(item, index) {
+            labels.push(item.category);
+            usedData.push(item.used);
+            totalUsed += item.used;
+            var color = bgColors[index % bgColors.length];
+            legendHtml += '<tr><td style="padding:5px;"><span style="display:inline-block;width:12px;height:12px;background:'+color+';margin-right:8px;border-radius:50%;"></span>'+item.category+'</td><td style="text-align:right; padding:5px; font-weight: bold;">'+item.used+'</td><td style="text-align:right; padding:5px;">'+item.remaining+'</td></tr>';
+        });
+        
+        legendHtml += '</table>';
+        document.getElementById('leave-legend').innerHTML = legendHtml;
+
+        var ctx = document.getElementById('leavePieChart').getContext('2d');
+        
+        // If all data is 0, chart.js won't render a pie. 
+        // We can render a "No Leaves Taken" pie or just let it be empty but without the top legend.
+        var chartData = usedData;
+        var chartBgColors = bgColors;
+        var tooltipCallback = function(context) {
+            return context.label + ': ' + context.raw + ' days';
+        };
+
+        if (totalUsed === 0) {
+            chartData = [1];
+            chartBgColors = ['#e0e0e0'];
+            labels = ['No Leaves Taken'];
+            tooltipCallback = function() { return 'No leaves taken yet'; };
+        }
+
+        new Chart(ctx, {
+            type: 'pie',
+            data: {
+                labels: labels,
+                datasets: [{
+                    data: chartData,
+                    backgroundColor: chartBgColors,
+                    hoverOffset: 4,
+                }],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false // Fix for Chart.js v3/v4
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: tooltipCallback
+                        }
+                    }
+                }
+            },
+        });
+    } else {
+        document.getElementById('leavePieChart').parentElement.innerHTML = '<p>No leave balances found for the team.</p>';
+    }
+});
+</script>
+{% endif %}
+{% endif %}
+{% endblock %}

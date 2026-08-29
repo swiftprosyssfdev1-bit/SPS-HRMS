@@ -1,0 +1,148 @@
+{% extends 'core/base.html' %}
+{% block content %}
+<div class="page-header">
+  <h1>My Profile</h1>
+  <div style="display:flex; gap:10px; align-items:center;">
+    {% if user.role == 'ADMIN' %}
+      <a href="{% url 'employees:edit_my_profile' %}" class="btn btn-accent">Edit Profile</a>
+      <a href="{% url 'employees:directory' %}" class="btn btn-outline">&larr; Back to Directory</a>
+    {% elif can_apply_resignation %}
+      {% if pending_resignation.status == 'PENDING' %}
+      <span class="badge badge-warning">Resignation Pending HR Review</span>
+      {% elif pending_resignation.status == 'NEGOTIATING' %}
+      <span class="badge badge-info">HR Has Sent You an Offer — See Below</span>
+      {% elif profile.status != 'EXITED' %}
+      <a href="{% url 'employees:edit_my_profile' %}" class="btn btn-accent">Edit Profile</a>
+      <a href="{% url 'employees:apply_resignation' %}" class="btn btn-danger">Apply for Resignation</a>
+      {% endif %}
+    {% endif %}
+  </div>
+</div>
+
+{% if pending_resignation.status == 'NEGOTIATING' %}
+<div class="card">
+  <h3>A Message From HR</h3>
+  <div style="padding:14px; background:var(--grey-50); border-radius:8px; margin-bottom:14px;">
+    <p style="margin:0;">{{ pending_resignation.hr_message }}</p>
+    <p style="margin:8px 0 0; font-size:0.75rem; color:var(--grey-500);">— {{ pending_resignation.hr_message_by|default:"HR" }}, {{ pending_resignation.hr_message_at|date:"d M Y, h:i A" }}</p>
+  </div>
+
+  <div style="display:flex; gap:10px; flex-wrap:wrap;">
+    <form method="post" action="{% url 'employees:accept_resignation_offer' pending_resignation.id %}" style="margin:0;">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-primary">Accept Offer &amp; Stay</button>
+    </form>
+    <button type="button" class="btn btn-danger" onclick="document.getElementById('quit-panel').classList.toggle('open-panel')">I'd Still Like to Quit</button>
+  </div>
+
+  <div id="quit-panel" class="negotiate-panel">
+    <form method="post" action="{% url 'employees:quit_after_negotiation' pending_resignation.id %}" style="margin-top:14px;">
+      {% csrf_token %}
+      <label>Message to HR (optional)</label>
+      <textarea name="message" class="form-control" rows="3" placeholder="Let HR know your final decision..."></textarea>
+      <button type="submit" class="btn btn-danger">Confirm — I Want to Quit</button>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+{% if profile.status == 'EXITED' %}
+<div class="card">
+  <p class="empty-state">Your resignation has been accepted. Exit date: {{ profile.exit_date }}.</p>
+</div>
+{% endif %}
+
+<!-- Profile header: large photo + name + IDs + status -->
+<div class="card" style="display:flex; gap:24px; align-items:center; flex-wrap:wrap;">
+  {% if profile.profile_photo %}
+  <img src="{{ profile.profile_photo.url }}" alt="" style="width:140px; height:140px; border-radius:14px; object-fit:cover; border:1px solid var(--grey-100); flex-shrink:0;">
+  {% else %}
+  <div style="width:140px; height:140px; border-radius:14px; background:var(--grey-100); display:flex; align-items:center; justify-content:center; color:var(--grey-500); font-size:0.85rem; flex-shrink:0;">No Photo</div>
+  {% endif %}
+  <div style="flex:1; min-width:220px;">
+    <h1 style="margin:0 0 6px;">
+      {{ user.get_full_name|default:user.username }}
+      {% if profile.status == 'EXITED' %}<span class="badge badge-danger">Exited</span>
+      {% elif profile.status == 'ONBOARDING' %}<span class="badge badge-warning">Onboarding</span>
+      {% else %}<span class="badge badge-active">Active</span>{% endif %}
+    </h1>
+    <p style="margin:0 0 4px; color:var(--grey-700);">{{ profile.designation|default:user.get_role_display }} &middot; {{ user.department|default:"No Department" }}</p>
+    <p style="margin:0; color:var(--grey-500); font-size:0.85rem;">
+      Enrollment ID: <strong>{{ profile.enrollment_id|default:"-" }}</strong> &middot;
+      Employee ID: <strong>{{ user.employee_id|default:"-" }}</strong>
+    </p>
+  </div>
+</div>
+
+<div class="card">
+  <h3>Profile Details</h3>
+  <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px 24px;">
+    <div><label style="font-weight:700;">Enrollment ID</label><p style="margin:0;">{{ profile.enrollment_id|default:"-" }}</p></div>
+    <div><label style="font-weight:700;">Employee ID</label><p style="margin:0;">{{ user.employee_id|default:"-" }}</p></div>
+    <div><label style="font-weight:700;">PF Status</label><p style="margin:0;">{% if profile.is_pf_applicable %}PF{% else %}Non-PF{% endif %}</p></div>
+    <div><label style="font-weight:700;">Name</label><p style="margin:0;">{{ user.get_full_name|default:user.username }}</p></div>
+    <div><label style="font-weight:700;">Status</label><p style="margin:0;">{% if profile.status == 'EXITED' %}<span>Exited</span>
+      {% elif profile.status == 'ONBOARDING' %}<span>Onboarding</span>
+      {% else %}<span>Active</span>{% endif %}</p></div>
+    <div><label style="font-weight:700;">ID Card Received</label><p style="margin:0;">{% if profile.id_card_received %}Yes{% else %}No{% endif %}</p></div>
+    <div><label style="font-weight:700;">Shift</label><p style="margin:0;">{{ profile.get_shift_display|default:"-" }}</p></div>
+    <div><label style="font-weight:700;">Type</label><p style="margin:0;">{{ profile.get_work_type_display|default:"-" }}</p></div>
+    <div><label style="font-weight:700;">Gender</label><p style="margin:0;">{{ profile.get_gender_display|default:"-" }}</p></div>
+    <div><label style="font-weight:700;">Designation / Role</label><p style="margin:0;">{{ profile.designation|default:user.get_role_display }}</p></div>
+    <div><label style="font-weight:700;">Marital Status</label><p style="margin:0;">{{ profile.get_marital_status_display|default:"-" }}</p></div>
+    <div><label style="font-weight:700;">Date of Birth</label><p style="margin:0;">{{ profile.date_of_birth|default:"-" }}</p></div>
+    <div><label style="font-weight:700;">Date of Joining</label><p style="margin:0;">{{ user.date_joined_company|default:"-" }}</p></div>
+    <div><label style="font-weight:700;">Qualification</label><p style="margin:0;">{{ profile.qualification|default:"-" }}</p></div>
+    <div><label style="font-weight:700;">Previous Experience</label><p style="margin:0;">{{ profile.previous_experience|default:"-" }}</p></div>
+    <div><label style="font-weight:700;">Experience (Current Company)</label><p style="margin:0;">{{ profile.current_company_experience|default:"-" }}</p></div>
+    <div><label style="font-weight:700;">Employment Status</label><p style="margin:0;">{{ profile.get_employment_status_display|default:"-" }}</p></div>
+    <div><label style="font-weight:700;">Aadhar Number</label><p style="margin:0;">{{ profile.aadhar_display }}</p></div>
+    <div><label style="font-weight:700;">PAN Number</label><p style="margin:0;">{{ profile.pan_no|default:"-" }}</p></div>
+    <div><label style="font-weight:700;">Mobile</label><p style="margin:0;">{% if user.phone %}{{ user.phone_country_code }} {{ user.phone }}{% else %}-{% endif %}</p></div>
+    <div><label style="font-weight:700;">Emergency Contact</label><p style="margin:0;">{{ profile.emergency_contact_name|default:"-" }}{% if profile.emergency_contact_phone %} &middot; {{ profile.emergency_contact_country_code }} {{ profile.emergency_contact_phone }}{% endif %}</p></div>
+    <div><label style="font-weight:700;">UAN / PF Number</label><p style="margin:0;">{{ profile.uan_pf_number|default:"-" }}</p></div>
+    <div><label style="font-weight:700;">ESI Number</label><p style="margin:0;">{{ profile.esi_number|default:"-" }}</p></div>
+    <div><label style="font-weight:700;">Address</label><p style="margin:0;">{{ profile.address|default:"-" }}</p></div>
+    <div><label style="font-weight:700;">Email</label><p style="margin:0;">{{ user.email|default:"-" }}</p></div>
+    <div><label style="font-weight:700;">Blood Group</label><p style="margin:0;">{{ profile.blood_group|default:"-" }}</p></div>
+    <div><label style="font-weight:700;">Referred By</label><p style="margin:0;">{{ profile.referred_by_name|default:"-" }}</p></div>
+    <div><label style="font-weight:700;">Referred By (Enrollment No.)</label><p style="margin:0;">{{ profile.referred_by_enrollment_id|default:"-" }}</p></div>
+    <div><label style="font-weight:700;">Reference 1 ({{ profile.get_reference1_type_display|default:"College Faculty / Previous Company" }})</label><p style="margin:0;">{{ profile.reference1_name|default:"-" }}{% if profile.reference1_contact %} &middot; {{ profile.reference1_contact }}{% endif %}</p></div>
+    <div><label style="font-weight:700;">Reference 2 (Relative)</label><p style="margin:0;">{{ profile.reference2_name|default:"-" }}{% if profile.reference2_relation %} ({{ profile.reference2_relation }}){% endif %}{% if profile.reference2_contact %} &middot; {{ profile.reference2_contact }}{% endif %}</p></div>
+    <div><label style="font-weight:700;">Department</label><p style="margin:0;">{{ user.department|default:"-" }}</p></div>
+    <div><label style="font-weight:700;">Branch</label><p style="margin:0;">{{ user.branch|default:"-" }}</p></div>
+  </div>
+  <p style="color:var(--grey-500); font-size:0.8rem; margin:14px 0 0;">
+    Identity fields above are managed by HR / your Manager. Use the Edit Profile button to change your photo, contact details, or documents.
+  </p>
+</div>
+
+<div class="card">
+  <h3>Bank Details</h3>
+  <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px 24px;">
+    <div><label style="font-weight:700;">Account Holder Name</label><p style="margin:0;">{{ bank_detail.account_holder_name|default:"-" }}</p></div>
+    <div><label style="font-weight:700;">Account Number</label><p style="margin:0;">{{ bank_detail.account_number|default:"-" }}</p></div>
+    <div><label style="font-weight:700;">IFSC Code</label><p style="margin:0;">{{ bank_detail.ifsc_code|default:"-" }}</p></div>
+    <div><label style="font-weight:700;">Bank Name</label><p style="margin:0;">{{ bank_detail.bank_name|default:"-" }}</p></div>
+    <div><label style="font-weight:700;">Branch Name</label><p style="margin:0;">{{ bank_detail.branch_name|default:"-" }}</p></div>
+  </div>
+</div>
+
+<div class="card">
+  <h3>My Documents</h3>
+  <table>
+    <tr><th>Type</th><th>Uploaded</th><th></th></tr>
+    {% for doc in documents %}
+    <tr>
+      <td>{{ doc.get_doc_type_display }}</td>
+      <td>{{ doc.uploaded_at|date:"d M Y" }}</td>
+      <td>
+        <a href="{{ doc.file.url }}" target="_blank" class="btn btn-outline btn-sm">View</a>
+        <a href="{% url 'employees:download_document' doc.id %}" class="btn btn-primary btn-sm">Download</a>
+      </td>
+    </tr>
+    {% empty %}<tr><td colspan="3" class="empty-state">No documents uploaded yet.</td></tr>{% endfor %}
+  </table>
+  <p style="color:var(--grey-500); font-size:0.8rem; margin:10px 0 0;">Use Edit Profile to upload or delete documents.</p>
+</div>
+{% endblock %}

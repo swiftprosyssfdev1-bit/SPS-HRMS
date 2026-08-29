@@ -1,0 +1,65 @@
+{% extends 'core/base.html' %}
+{% block content %}
+<div class="page-header">
+  <h1>
+    {% if list_type == 'exited' %}Exited Employees{% else %}New Joiners{% endif %}
+    {% if branch %}<span style="font-size:0.9rem; font-weight:500; color:var(--grey-500);">— {{ branch.name }} ({{ branch.code }})</span>{% endif %}
+  </h1>
+  <a href="{% url 'core:dashboard' %}" class="btn btn-outline">Back to Dashboard</a>
+</div>
+
+<div class="card">
+  <form method="get" style="display:flex; gap:12px; flex-wrap:wrap; align-items:end; margin-bottom:0;">
+    <div style="min-width:180px;">
+      <label>Type</label>
+      <select name="type" class="form-control" style="margin-bottom:0;" onchange="this.form.submit()">
+        <option value="joiners" {% if list_type == 'joiners' %}selected{% endif %}>New Joiners</option>
+        <option value="exited" {% if list_type == 'exited' %}selected{% endif %}>Exited Employees</option>
+      </select>
+    </div>
+    <div style="min-width:180px;">
+      <label>Month</label>
+      <input type="month" name="month" value="{{ selected_month }}" class="form-control" style="margin-bottom:0;" onchange="this.form.submit()">
+    </div>
+    {% if branch %}<input type="hidden" name="branch" value="{{ branch.id }}">{% endif %}
+  </form>
+</div>
+
+<div class="card">
+  <h3 style="margin-top:0;">{{ month_label }}</h3>
+  <table>
+    <tr>
+      <th>Employee</th>
+      <th>ID</th>
+      <th>Department</th>
+      <th>Role</th>
+      {% if list_type == 'exited' %}
+      <th>Exit Date</th>
+      {% else %}
+      <th>Date Joined</th>
+      {% endif %}
+      <th></th>
+    </tr>
+    {% for profile in rows %}
+    <tr>
+      <td>{{ profile.user.get_full_name|default:profile.user.username }}</td>
+      <td>{{ profile.user.employee_id|default:"-" }}</td>
+      <td>{{ profile.user.department.name|default:"No Department" }}</td>
+      <td>{{ profile.user.get_role_display }}</td>
+      {% if list_type == 'exited' %}
+      <td>{{ profile.exit_date|date:"d M Y"|default:"-" }}</td>
+      {% else %}
+      <td>{{ profile.user.date_joined_company|date:"d M Y"|default:"-" }}</td>
+      {% endif %}
+      <td><a href="{% url 'employees:employee_detail' profile.user.id %}" class="btn btn-sm btn-primary">View</a></td>
+    </tr>
+    {% empty %}
+    <tr>
+      <td colspan="6" style="text-align:center; color:var(--grey-500);">
+        No {% if list_type == 'exited' %}exits{% else %}new joiners{% endif %} for this month.
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

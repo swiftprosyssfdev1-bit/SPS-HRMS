@@ -1,0 +1,332 @@
+{% extends 'core/base.html' %}
+{% block content %}
+<div class="page-header">
+  <h1>Edit - {{ emp_user.get_full_name|default:emp_user.username }}</h1>
+  <a href="{% url 'employees:employee_detail' emp_user.id %}" class="btn btn-outline btn-sm">&larr; Back to View</a>
+</div>
+
+<form method="post" id="status-update-form" action="{% url 'employees:update_employee_status' emp_user.id %}">
+  {% csrf_token %}
+</form>
+
+<form method="post" id="main-profile-form" enctype="multipart/form-data">
+  {% csrf_token %}
+
+  <div class="card">
+    <h3>Profile Photo</h3>
+    <div style="display:flex; align-items:center; gap:20px; flex-wrap:wrap;">
+      {% if profile.profile_photo %}
+      <img src="{{ profile.profile_photo.url }}" alt="" style="width:110px; height:110px; border-radius:12px; object-fit:cover; border:1px solid var(--grey-100);">
+      {% else %}
+      <div style="width:110px; height:110px; border-radius:12px; background:var(--grey-100); display:flex; align-items:center; justify-content:center; color:var(--grey-500); font-size:0.8rem; text-align:center;">No Photo</div>
+      {% endif %}
+      <div style="flex:1; min-width:220px;">
+        <label>Upload / Change Photo</label>
+        {{ identity_form.profile_photo }}
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Identity</h3>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:0 20px;">
+      <div>
+        <label>Enrollment ID</label>
+        <div style="display:flex; gap:8px; align-items:center; margin-bottom:14px;">
+          <span class="form-control" style="max-width:110px; background:var(--grey-50); text-align:center; flex-shrink:0; margin-bottom:0;">{{ enrollment_prefix }}</span>
+          <input type="text" name="enrollment_suffix" class="form-control" style="margin-bottom:0;"
+                 value="{{ enrollment_suffix }}" maxlength="6"
+                 oninput="this.value=this.value.replace(/[^0-9]/g,'')">
+        </div>
+      </div>
+      <div>
+        <label>Employee ID</label>
+        <div style="display:flex; gap:8px; align-items:center; margin-bottom:14px;">
+          <span class="form-control" style="max-width:110px; background:var(--grey-50); text-align:center; flex-shrink:0; margin-bottom:0;">{{ employee_id_prefix }}</span>
+          <input type="text" name="employee_id_suffix" class="form-control" style="margin-bottom:0;"
+                 value="{{ employee_id_suffix }}" maxlength="6"
+                 oninput="this.value=this.value.replace(/[^0-9]/g,'')">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Profile</h3>
+    {% if form.errors or identity_form.errors or bank_form.errors %}
+    <ul class="messages"><li class="error">Please fix the highlighted fields below.</li></ul>
+    {% endif %}
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:0 20px;">
+      <div><label>First Name</label>{{ form.first_name }}{% if form.first_name.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ form.first_name.errors.0 }}</p>{% endif %}</div>
+      <div><label>Last Name</label>{{ form.last_name }}{% if form.last_name.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ form.last_name.errors.0 }}</p>{% endif %}</div>
+      <div><label>Email</label>{{ form.email }}{% if form.email.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ form.email.errors.0 }}</p>{% endif %}</div>
+      <div><label>Department</label>{{ form.department }}</div>
+      <div><label>{{ form.manager.label }}</label>{{ form.manager }}
+        <p style="color:var(--grey-500); font-size:0.8rem; margin-top:2px;">{{ form.manager.help_text }}</p>
+      </div>
+      <div id="project-group" style="display: none;"><label>Project</label>{{ form.project }}</div>
+      {% if emp_user.role == 'HR' or emp_user.role == 'SENIOR_HR' %}
+      <div><label>Home Branch</label>{{ form.branch }}</div>
+      <div style="grid-column:1 / -1; margin-bottom:14px;">
+          <label>Branch Access</label>
+          <p style="color:var(--grey-500); font-size:0.8rem; margin-top:-4px;">Select every branch this HR user can view and manage.</p>
+          <div class="branch-checkbox-grid">
+            {% for checkbox in form.accessible_branches %}
+            <label class="branch-checkbox">{{ checkbox.tag }} {{ checkbox.choice_label }}</label>
+            {% endfor %}
+          </div>
+        </div>
+        {% else %}
+        <div><label>Branch</label>{{ form.branch }}</div>
+        {% endif %}
+
+      
+      <div><label>Phone</label>
+        <div style="display:flex; gap:8px; margin-bottom:14px;">{{ form.phone_country_code }}{{ form.phone }}</div>
+        {% if form.phone.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ form.phone.errors.0 }}</p>{% endif %}
+      </div>
+      <div><label>Date of Joining</label>{{ form.date_joined_company }}</div>
+      <div><label>Designation / Role</label>{{ identity_form.designation }}</div>
+      <div><label>Gender</label>{{ identity_form.gender }}</div>
+      <div><label>Marital Status</label>{{ identity_form.marital_status }}</div>
+      <div><label>Date of Birth</label>{{ identity_form.date_of_birth }}</div>
+      <div><label>Blood Group</label>{{ identity_form.blood_group }}</div>
+      <div><label>Qualification</label>{{ identity_form.qualification }}</div>
+      <div><label>Previous Experience</label>{{ identity_form.previous_experience }}</div>
+      <div><label>Experience (Current Company)</label>{{ identity_form.current_company_experience }}</div>
+      <div><label>Employment Status</label>{{ identity_form.employment_status }}</div>
+      <div><label>Shift</label>{{ identity_form.shift }}</div>
+      <div><label>Type</label>{{ identity_form.work_type }}</div>
+    </div>
+    <div style="display:flex; gap:24px; margin:6px 0 14px; flex-wrap:wrap;">
+      <label style="display:flex; align-items:center; gap:8px; font-weight:600; margin:0;">{{ identity_form.is_pf_applicable }} PF Applicable</label>
+      <label style="display:flex; align-items:center; gap:8px; font-weight:600; margin:0;">{{ identity_form.id_card_received }} ID Card Received</label>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Contact &amp; Statutory IDs</h3>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:0 20px;">
+      <div><label>Aadhar Number</label>{{ identity_form.aadhar_no }}{% if identity_form.aadhar_no.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ identity_form.aadhar_no.errors.0 }}</p>{% endif %}</div>
+      <div><label>PAN Number</label>{{ identity_form.pan_no }}{% if identity_form.pan_no.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ identity_form.pan_no.errors.0 }}</p>{% endif %}</div>
+      <div><label>UAN / PF Number</label>{{ identity_form.uan_pf_number }}</div>
+      <div><label>ESI Number</label>{{ identity_form.esi_number }}</div>
+      <div><label>Emergency Contact Name</label>{{ identity_form.emergency_contact_name }}</div>
+      <div><label>Emergency Contact Phone</label>
+        <div style="display:flex; gap:8px; margin-bottom:14px;">{{ identity_form.emergency_contact_country_code }}{{ identity_form.emergency_contact_phone }}</div>
+          {% if identity_form.emergency_contact_phone.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ identity_form.emergency_contact_phone.errors.0 }}</p>{% endif %}
+        </div>
+      </div>
+      <div style="grid-column:1 / -1;"><label>Address</label>{{ identity_form.address }}</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Reference Details</h3>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:0 20px;">
+      <div><label>Referred By (Name)</label>{{ identity_form.referred_by_name }}</div>
+      <div><label>Referred By (Enrollment No.)</label>{{ identity_form.referred_by_enrollment_id }}</div>
+      <div><label>Reference 1 Name</label>{{ identity_form.reference1_name }}</div>
+      <div><label>Reference 1 Type</label>{{ identity_form.reference1_type }}</div>
+      <div><label>Reference 1 Contact</label>{{ identity_form.reference1_contact }}</div>
+      <div><label>Reference 2 Name (Relative)</label>{{ identity_form.reference2_name }}</div>
+      <div><label>Reference 2 Relation</label>{{ identity_form.reference2_relation }}</div>
+      <div><label>Reference 2 Contact</label>{{ identity_form.reference2_contact }}</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Bank Details</h3>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:0 20px;">
+      <div><label>Account Holder Name</label>{{ bank_form.account_holder_name }}</div>
+      <div><label>Account Number</label>{{ bank_form.account_number }}{% if bank_form.account_number.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ bank_form.account_number.errors.0 }}</p>{% endif %}</div>
+      <div><label>IFSC Code</label>{{ bank_form.ifsc_code }}{% if bank_form.ifsc_code.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ bank_form.ifsc_code.errors.0 }}</p>{% endif %}</div>
+      <div><label>Bank Name</label>{{ bank_form.bank_name }}</div>
+      <div><label>Branch Name</label>{{ bank_form.branch_name }}</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Rejoin / Exit Tracking</h3>
+    <p style="color:var(--grey-700); font-size:0.85rem; margin-top:0;">
+      Original joining date is auto-filled the moment this employee's status is moved from Exited back to Active (a rejoin). You can adjust it here if needed.
+    </p>
+    <div style="max-width:260px;">
+      <label>Original Joining Date (if rejoined)</label>
+      {{ identity_form.old_joining_date }}
+    </div>
+    {% if profile.exit_date %}
+    <div style="display:flex; gap:32px; flex-wrap:wrap; margin-top:6px;">
+      <div><label style="margin:0 0 2px;">Last Resign Date</label><p style="margin:0; font-weight:600;">{{ profile.exit_date }}</p></div>
+      <div><label style="margin:0 0 2px;">Last Resign Reason</label><p style="margin:0; font-weight:600;">{{ profile.exit_reason|default:"-"|truncatewords:15 }}</p></div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="updatebutton">
+    <button type="submit" class="btn btn-primary">Save All Profile Changes</button>
+  </div>
+</form>
+
+{% if request.user.role == 'HR' or request.user.role == 'SENIOR_HR' or emp_user.role == 'HR' or emp_user.role == 'SENIOR_HR' or emp_user.role == 'ADMIN' %}
+<div class="card">
+  <h3>Employment Status</h3>
+  <div style="display:flex; gap:10px; align-items:center; max-width:400px;">
+    <select name="status" form="status-update-form" class="form-control" style="margin-bottom:0;">
+      <option value="ONBOARDING" {% if profile.status == 'ONBOARDING' %}selected{% endif %}>Onboarding</option>
+      <option value="ACTIVE" {% if profile.status == 'ACTIVE' %}selected{% endif %}>Active{% if profile.status == 'EXITED' %} (Rejoin){% endif %}</option>
+      <option value="EXITED" {% if profile.status == 'EXITED' %}selected{% endif %}>Exited</option>
+    </select>
+    <button type="submit" form="status-update-form" class="btn btn-accent" style="flex-shrink:0;">Update Status</button>
+  </div>
+  <p style="color:var(--grey-500); font-size:0.8rem; margin:10px 0 0;">
+    Moving Exited &rarr; Active preserves their previous joining date automatically. Update "Date of Joining" above for the new stint afterwards.
+  </p>
+</div>
+{% endif %}
+
+{% if can_change_role %}
+<div class="card">
+  <h3>Role &amp; Access</h3>
+  <form method="post" action="{% url 'employees:change_role' emp_user.id %}">
+    {% csrf_token %}
+    <div style="display:flex; gap:10px; align-items:end; flex-wrap:wrap;">
+      <div style="flex:1; min-width:200px;"><label>Role</label>{{ role_form.role }}</div>
+      <button type="submit" class="btn btn-accent" style="margin-bottom:14px;">Update Role</button>
+    </div>
+
+    <div id="senior-hr-wrap" style="display:none; margin-top:6px;">
+      <label style="display:flex; align-items:center; gap:8px; font-weight:600;">
+        {{ role_form.is_senior_hr }} Senior HR
+      </label>
+      <p style="color:var(--grey-500); font-size:0.8rem; margin-top:-4px;">{{ role_form.is_senior_hr.help_text }}</p>
+    </div>
+  </form>
+  <p style="color:var(--grey-500); font-size:0.8rem; margin:0;">HR can only assign Employee or Manager. Contact Admin to grant HR/Admin access.</p>
+</div>
+
+{% if is_admin_viewer and emp_user.role == 'HR' or is_admin_viewer and emp_user.role == 'SENIOR_HR' %}
+<div style="margin-top:14px; padding-top:14px; border-top:1px solid var(--grey-100);">
+  <p style="margin:0 0 8px; font-size:0.85rem; color:var(--grey-700);">
+    All-Branch Access: {% if emp_user.can_access_all_branches %}<span class="badge badge-success">Granted</span>{% else %}<span class="badge badge-warning">Restricted to own branch</span>{% endif %}
+  </p>
+  <form method="post" action="{% url 'employees:toggle_branch_admin_access' emp_user.id %}" style="margin:0;">
+    {% csrf_token %}
+    <button type="submit" class="btn btn-outline btn-sm">{% if emp_user.can_access_all_branches %}Revoke{% else %}Grant{% endif %} All-Branch Access</button>
+  </form>
+</div>
+{% endif %}
+{% endif %}
+
+
+<div class="card">
+  <h3>Salary Details</h3>
+  {% if salary_form.errors %}
+  <ul class="messages"><li class="error">Please fix the highlighted salary fields below.</li></ul>
+  {% endif %}
+  <form method="post" action="{% url 'employees:update_salary_structure' emp_user.id %}">
+    {% csrf_token %}
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:0 20px;">
+      <div><label>Basic</label>{{ salary_form.basic }}{% if salary_form.basic.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ salary_form.basic.errors.0 }}</p>{% endif %}</div>
+      <div><label>HRA</label>{{ salary_form.hra }}{% if salary_form.hra.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ salary_form.hra.errors.0 }}</p>{% endif %}</div>
+      <div><label>Other Allowances</label>{{ salary_form.other_allowances }}{% if salary_form.other_allowances.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ salary_form.other_allowances.errors.0 }}</p>{% endif %}</div>
+      <div><label>Bonus (flat, monthly)</label>{{ salary_form.bonus }}{% if salary_form.bonus.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ salary_form.bonus.errors.0 }}</p>{% endif %}</div>
+      <div><label>PF %</label>{{ salary_form.pf_percent }}{% if salary_form.pf_percent.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ salary_form.pf_percent.errors.0 }}</p>{% endif %}</div>
+    </div>
+    <label><input type="checkbox" name="pf_applicable" {% if salary_form.instance.pf_applicable %}checked{% endif %}> PF Applicable (Payroll Calculation)</label>
+    <button type="submit" class="btn btn-primary" style="margin-top:10px;">Save Salary</button>
+  </form>
+</div>
+
+<div class="card">
+  <h3>Documents</h3>
+  <table>
+    <tr><th>Type</th><th>Uploaded</th><th></th></tr>
+    {% for doc in documents %}
+    <tr>
+      <td>{{ doc.get_doc_type_display }}</td>
+      <td>{{ doc.uploaded_at|date:"d M Y" }}</td>
+      <td>
+        <a href="{{ doc.file.url }}" target="_blank" class="btn btn-outline btn-sm" style="margin-right:2px; margin-top:5px;">View</a>
+        <a href="{% url 'employees:download_document' doc.id %}" class="btn btn-primary btn-sm" style="margin-right:2px; margin-top:5px;">Download</a>
+        <form method="post" action="{% url 'employees:delete_document' emp_user.id doc.id %}" style="display:inline;" onsubmit="return confirm('Delete this document?');">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-danger btn-sm" style = "margin-top: 5px; ">Delete</button>
+        </form>
+      </td>
+    </tr>
+    {% empty %}<tr><td colspan="3" class="empty-state">No documents uploaded.</td></tr>{% endfor %}
+  </table>
+  <form method="post" action="{% url 'employees:upload_document' emp_user.id %}" enctype="multipart/form-data" style="margin-top:14px; display:flex; gap:10px; align-items:end;">
+    {% csrf_token %}
+    <div style="flex:1;"><label>Official Document Type</label>{{ doc_form.doc_type }}</div>
+    <div style="flex:1;"><label>File</label>{{ doc_form.file }}</div>
+    <button type="submit" class="btn btn-accent" style="margin-bottom:14px;">Upload</button>
+  </form>
+</div>
+
+
+<script>
+(function () {
+  var branchSelect = document.querySelector('#main-profile-form select[name="branch"]');
+  var deptSelect = document.querySelector('#main-profile-form select[name="department"]');
+  var projectSelect = document.querySelector('#main-profile-form select[name="project"]');
+  var projectGroup = document.getElementById('project-group');
+  if (!branchSelect || !deptSelect) return;
+
+  function toggleProject() {
+    var deptName = deptSelect.options[deptSelect.selectedIndex]?.text || '';
+    if (deptName.toLowerCase().includes('production') && projectGroup) {
+      projectGroup.style.display = 'block';
+      filterProjects();
+    } else if (projectGroup) {
+      projectGroup.style.display = 'none';
+      if (projectSelect) projectSelect.value = '';
+    }
+  }
+
+  function filterProjects() {
+    if (!projectSelect) return;
+    var branchId = branchSelect.value;
+    var options = Array.prototype.slice.call(projectSelect.options);
+    
+    options.forEach(function (opt) {
+      if (opt.value === '') return;
+      if (!branchId || opt.getAttribute('data-branch') === branchId) {
+        opt.style.display = '';
+      } else {
+        opt.style.display = 'none';
+        if (projectSelect.value === opt.value) {
+          projectSelect.value = '';
+        }
+      }
+    });
+  }
+
+  deptSelect.addEventListener('change', toggleProject);
+  branchSelect.addEventListener('change', function() {
+    if (projectGroup && projectGroup.style.display !== 'none') {
+      filterProjects();
+    }
+  });
+
+  toggleProject();
+})();
+</script>
+
+<script>
+(function () {
+  var roleForm = document.querySelector('form[action="{% url 'employees:change_role' emp_user.id %}"]');
+  if (!roleForm) return;
+  var roleSelect = roleForm.querySelector('select[name="role"]');
+  var wrap = document.getElementById('senior-hr-wrap');
+  if (!roleSelect || !wrap) return;
+
+  function toggleSeniorHr() {
+    wrap.style.display = (roleSelect.value === 'HR') ? '' : 'none';
+  }
+  roleSelect.addEventListener('change', toggleSeniorHr);
+  toggleSeniorHr();
+})();
+</script>
+{% endblock %}
