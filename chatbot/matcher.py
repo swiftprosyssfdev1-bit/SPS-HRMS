@@ -294,6 +294,13 @@ def _intent_my_department(user, text):
     msg = f"You're in the {user.department.name} department."
     if mgr:
         msg += f" Department manager: {mgr.get_full_name() or mgr.username}."
+    # "show me the employees in my department" / "who is in my department" —
+    # this intent used to answer these with JUST the department name, since
+    # 'my department' is a substring of both. Point them to the actual
+    # roster instead of leaving them thinking that was the whole answer.
+    if _any_word(text, 'employees', 'who is in', "who's in", 'list', 'show me', 'team members', 'colleagues'):
+        from chatbot.responses import directory_response
+        msg += "\n\n" + directory_response(user)
     return msg
 
 
@@ -446,6 +453,14 @@ def _intent_payslip(user, text):
     if not _any_word(text, 'payslip', 'pay slip', 'salary slip', 'download payslip',
                       'how to download payslip', 'where to download payslip',
                       'get payslip', 'view payslip'):
+        return None
+    # "Can I view ANOTHER employee's payslip?" is a permission/authorization
+    # question, not a "how do I get my own payslip" request — but 'payslip'
+    # alone matched it, so it was answering with own-payslip download
+    # instructions instead. Let it fall through to RAG/FAQ, which already
+    # handles the equivalent "another employee's salary" question correctly.
+    if _any_word(text, 'another employee', 'other employee', "someone else's", 'colleague',
+                 'anyone else', "employee's payslip", 'another person', 'other person'):
         return None
     from chatbot.responses import payslip_response
     from payroll.models import Payslip
@@ -694,7 +709,14 @@ def _intent_attendance_month(user, text):
     has_present_word = _any_word(text, 'present', 'attended', 'worked')
     has_month_word = _any_word(text, 'month', 'this month')
     has_days_word = _any_word(text, 'days', 'day')
-    if not (has_present_word and has_month_word and has_days_word):
+    has_percentage_word = _any_word(text, 'percentage', 'percent') or '%' in text
+    # 'percentage'/'percent' now also qualifies alongside present/days —
+    # "what is my attendance percentage this month?" has 'month' + a
+    # percentage word but no 'present'/'attended'/'days', so it used to
+    # miss this intent entirely and fall through to RAG, which then
+    # hallucinated a bogus formula instead of just computing the real
+    # number from AttendanceRecord. See chat history 2026-08-29.
+    if not (has_month_word and (has_present_word or has_percentage_word) and (has_days_word or has_percentage_word)):
         return None
     from attendance.models import AttendanceRecord
     today = date.today()
@@ -702,7 +724,31 @@ def _intent_attendance_month(user, text):
         user=user, date__year=today.year, date__month=today.month, in_time__isnull=False
     )
     count = records.count()
-    return f"You've been present {count} day(s) so far this month ({today.strftime('%B %Y')})."
+    if not has_percentage_word:
+        return f"You've been present {count} day(s) so far this month ({today.strftime('%B %Y')})."
+
+    # Elapsed working days this month so far (Mon–Sat, excluding Sunday) —
+    # same "working day" definition used by _intent_perfect_attendance.
+    elapsed_working_days = sum(
+        1 for d in range(1, today.day + 1)
+        if date(today.year, today.month, d).weekday() != 6
+    )
+    if elapsed_working_days == 0:
+        return f"You've been present {count} day(s) so far this month ({today.strftime('%B %Y')})."
+    pct = round(count / elapsed_working_days * 100, 1)
+    return (
+        f"You've been present {count} of {elapsed_working_days} working day(s) so far this month "
+        f"({today.strftime('%B %Y')}) — that's {pct}%."
+    )
+
+
+# Matches "last/past N days", optionally with "working"/"business" in
+# between ("last 7 working days", "past 10 business days") — the earlier
+# exact-phrase list only caught "last 7 days" verbatim and missed the very
+# common "N working days" phrasing, silently falling through to RAG, which
+# hallucinated a nonexistent separate "Production Tracker app". See chat
+# history 2026-08-29.
+_RECENT_DAYS_RE = re.compile(r'\b(?:last|past)\s+(\d{1,3})\s*(?:working|business)?\s*days?\b')
 
 
 def _intent_attendance_recent_days(user, text):
@@ -714,17 +760,16 @@ def _intent_attendance_recent_days(user, text):
     specific) has been observed to fall back to a generic "as an AI
     language model I don't have access to your personal data" refusal —
     wrong, since the bot does have the logged-in user's own attendance."""
-    if not _any_word(text, 'last 7 days', 'past 7 days', 'last week', 'past week',
-                      'last 30 days', 'past 30 days', 'last 15 days', 'past 15 days'):
+    match = _RECENT_DAYS_RE.search(text)
+    if match:
+        num_days = int(match.group(1))
+    elif _any_word(text, 'last week', 'past week'):
+        num_days = 7
+    else:
         return None
+    num_days = max(1, min(num_days, 90))  # sane bounds — avoid a 10000-day query
     from datetime import timedelta
     from attendance.models import AttendanceRecord
-    if _any_word(text, 'last 30 days', 'past 30 days'):
-        num_days = 30
-    elif _any_word(text, 'last 15 days', 'past 15 days'):
-        num_days = 15
-    else:
-        num_days = 7
     today = date.today()
     start = today - timedelta(days=num_days - 1)
     records = AttendanceRecord.objects.filter(
@@ -1053,6 +1098,81 @@ def _intent_team_production_today(user, text):
     return f"Today's team production: {achieved} achieved against {target} target, overall efficiency about {eff}%. Records: {rows.count()}."
 
 
+def _intent_daily_summary(user, text):
+    """'Today's HR summary' style broad multi-part questions — present/
+    absent/on-leave counts, pending approvals, team productivity. Every
+    piece here is already computable from existing data (same queries as
+    _intent_team_attendance_today / _intent_team_leave_today /
+    _intent_pending_leave_approvals_count / _intent_team_production_today),
+    but no single intent used to combine them, so a broad question like
+    this fell through to RAG, which had no chance of answering something
+    this multi-part and just hung until the frontend's 180s abort. See
+    chat history 2026-08-29. Each section is wrapped individually so one
+    missing model/table doesn't blank out the whole summary."""
+    if not _any_word(text, "today's summary", 'daily summary', 'hr summary',
+                      "today's hr summary", 'give me a summary', 'summary for today',
+                      'overview of today', "today's overview", 'daily overview',
+                      'team summary', "today's report"):
+        return None
+    denied = _team_or_scope_denied(user)
+    if denied:
+        return denied
+
+    lines = []
+
+    try:
+        from attendance.models import AttendanceRecord
+        qs = _role_data_scope(user).exclude(id=user.id)
+        ids = list(qs.values_list('id', flat=True))
+        total = len(ids)
+        present = AttendanceRecord.objects.filter(
+            date=date.today(), user_id__in=ids, in_time__isnull=False
+        ).count()
+        lines.append(f"• Attendance: {present} present, {total - present} absent, out of {total}.")
+    except Exception:
+        lines.append("• Attendance: unavailable right now.")
+
+    try:
+        from leaves.models import LeaveRequest
+        ids = list(_role_data_scope(user).exclude(id=user.id).values_list('id', flat=True))
+        on_leave = LeaveRequest.objects.filter(
+            user_id__in=ids, request_type__in=['LEAVE', 'WFH'], status='APPROVED',
+            start_date__lte=date.today(), end_date__gte=date.today(),
+        ).count()
+        lines.append(f"• On leave/WFH today: {on_leave}.")
+    except Exception:
+        lines.append("• On leave/WFH: unavailable right now.")
+
+    try:
+        from leaves.models import LeaveRequest
+        if user.is_hr_or_admin():
+            pending = LeaveRequest.objects.filter(status='PENDING_HR').count()
+        elif user.is_coo() or user.role in ('CTO', 'GENERAL_MANAGER'):
+            pending = LeaveRequest.objects.filter(status='PENDING_COO').count()
+        else:
+            pending_qs = LeaveRequest.objects.filter(status='PENDING_MANAGER')
+            pending = sum(1 for r in pending_qs if r.get_manager() and r.get_manager().id == user.id)
+        lines.append(f"• Pending your leave approval: {pending}.")
+    except Exception:
+        lines.append("• Pending leave approvals: unavailable right now.")
+
+    try:
+        from production_tracker.models import DailyProduction
+        ids = list(_role_data_scope(user).exclude(id=user.id).values_list('id', flat=True))
+        rows = DailyProduction.objects.filter(employee_id__in=ids, date=date.today())
+        if rows.exists():
+            achieved = sum(r.achieved for r in rows)
+            target = sum(r.actual_target or r.target_day for r in rows)
+            eff = round((achieved / target) * 100, 2) if target else 0
+            lines.append(f"• Team productivity: {achieved} achieved vs {target} target ({eff}% efficiency).")
+        else:
+            lines.append("• Team productivity: no production records for today yet.")
+    except Exception:
+        lines.append("• Team productivity: unavailable right now.")
+
+    return f"Here's today's summary ({date.today().strftime('%d %b %Y')}):\n" + "\n".join(lines)
+
+
 def _intent_pending_leave_details(user, text):
     if not _any_word(text, 'show pending leave requests', 'list pending leave',
                       'pending leave requests', 'leave requests awaiting approval',
@@ -1333,7 +1453,16 @@ def _intent_projects_navigation(user, text):
 
 
 def _intent_who_is_on_leave_today(user, text):
-    if _any_word(text, 'who is on leave today', 'who is absent today', 'who is on leave'):
+    # Was an exact-phrase list ('who is on leave today', 'who is on leave')
+    # — broke on any inserted qualifier, e.g. "who is on APPROVED leave
+    # today" doesn't contain 'who is on leave' as a contiguous substring,
+    # so it fell through to RAG, which hallucinated a garbled non-answer
+    # ("The employee on approved leave today is not specified in the
+    # question."). Switched to an AND-based check, same fix pattern as
+    # _intent_attendance_month's percentage fix. See chat history 2026-08-29.
+    has_who_on = _any_word(text, 'who is on', "who's on", 'who all is on', 'who all are on')
+    has_leave_word = _any_word(text, 'leave')
+    if has_who_on and has_leave_word:
         from leaves.models import LeaveRequest
         from django.utils import timezone
         
@@ -1422,6 +1551,7 @@ DYNAMIC_INTENTS = [
     _intent_team_attendance_today,
     _intent_team_leave_today,
     _intent_team_production_today,
+    _intent_daily_summary,
     _intent_pending_leave_details,
     _intent_my_payslip_live,
     _intent_allowance_request_status,

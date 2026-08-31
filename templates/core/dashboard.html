@@ -36,6 +36,15 @@
   <div class="stat-card"><div class="stat-value">{{ employee_count }}</div><div class="stat-label">Total Employees</div></div>
 </div>
 <div class="card">
+  <h3>Your Attendance Today</h3>
+  {% if today_record and today_record.in_time %}
+    <p>Punched in at <strong>{{ today_record.in_time|time:"h:i A" }}</strong>{% if today_record.out_time %}, punched out at <strong>{{ today_record.out_time|time:"h:i A" }}</strong>{% endif %}.</p>
+  {% else %}
+    <p>You haven't punched in today.</p>
+  {% endif %}
+  <a href="{% url 'attendance:punch' %}" class="btn btn-primary">Open Attendance</a>
+</div>
+<div class="card">
   <h3>Quick Actions</h3>
   <div class="punch-btns" style="justify-content:flex-start; flex-wrap:wrap;">
     <a href="{% url 'employees:directory' %}" class="btn btn-primary">Employee Directory</a>
@@ -128,6 +137,15 @@
 </div>
 
 <div class="card">
+  <h3>Your Attendance Today</h3>
+  {% if today_record and today_record.in_time %}
+    <p>Punched in at <strong>{{ today_record.in_time|time:"h:i A" }}</strong>{% if today_record.out_time %}, punched out at <strong>{{ today_record.out_time|time:"h:i A" }}</strong>{% endif %}.</p>
+  {% else %}
+    <p>You haven't punched in today.</p>
+  {% endif %}
+  <a href="{% url 'attendance:punch' %}" class="btn btn-primary">Open Attendance</a>
+</div>
+<div class="card">
   <h3>Quick Actions</h3>
   <div class="punch-btns" style="justify-content:flex-start; flex-wrap:wrap;">
     <a href="{% url 'employees:directory' %}" class="btn btn-primary">Employee Directory</a>
@@ -166,6 +184,15 @@
     <div class="stat-label">Exited Employees (This Month)</div>
     <a href="{% url 'employees:joiners_exits' %}?type=exited&month={{ current_month }}" style="display:inline-block; margin-top:8px; font-size:0.78rem; color:var(--electric-blue); font-weight:600; text-decoration:none;">View details &rarr;</a>
   </div>
+</div>
+<div class="card">
+  <h3>Your Attendance Today</h3>
+  {% if today_record and today_record.in_time %}
+    <p>Punched in at <strong>{{ today_record.in_time|time:"h:i A" }}</strong>{% if today_record.out_time %}, punched out at <strong>{{ today_record.out_time|time:"h:i A" }}</strong>{% endif %}.</p>
+  {% else %}
+    <p>You haven't punched in today.</p>
+  {% endif %}
+  <a href="{% url 'attendance:punch' %}" class="btn btn-primary">Open Attendance</a>
 </div>
 <div class="card">
   <h3>Quick Actions</h3>

@@ -1,12 +1,9 @@
 import json
 
 from django.contrib.auth.decorators import login_required
-from django.db.models import Count
 from django.http import JsonResponse
-from django.shortcuts import render
 from django.views.decorators.http import require_POST
 
-from core.decorators import hr_or_admin_required
 from chatbot.matcher import get_reply
 from chatbot.models import ChatLog
 
@@ -83,7 +80,7 @@ def chatbot_ask(request):
             "reply": result["reply"],
             "options": [
                 {"action": "forward_hr", "label": forward_label},
-                {"action": "denied", "label": "No, thanks"},
+                {"action": "denied", "label": "Denied"},
             ],
             "message": message,
         })
@@ -117,30 +114,3 @@ def chatbot_resolve(request):
         })
 
     return JsonResponse({"reply": "Sorry, I didn't understand that choice."}, status=400)
-
-
-@hr_or_admin_required
-def chatbot_analytics(request):
-    """HR-facing report closing the loop on the escalation flow: shows which
-    questions the bot couldn't answer most often (candidates for new FAQs)
-    and a breakdown of how questions overall are being resolved."""
-    top_unanswered = (
-        ChatLog.objects
-        .filter(answer_source='UNKNOWN')
-        .values('question')
-        .annotate(times_asked=Count('id'))
-        .order_by('-times_asked')[:20]
-    )
-    source_breakdown = (
-        ChatLog.objects
-        .values('answer_source')
-        .annotate(total=Count('id'))
-        .order_by('-total')
-    )
-    total_questions = ChatLog.objects.count()
-
-    return render(request, 'chatbot/analytics.html', {
-        'top_unanswered': top_unanswered,
-        'source_breakdown': source_breakdown,
-        'total_questions': total_questions,
-    })
