@@ -7,9 +7,9 @@
       <a href="{% url 'employees:edit_my_profile' %}" class="btn btn-accent">Edit Profile</a>
       <a href="{% url 'employees:directory' %}" class="btn btn-outline">&larr; Back to Directory</a>
     {% elif can_apply_resignation %}
-      {% if pending_resignation.status == 'PENDING' %}
+      {% if latest_resignation.status == 'PENDING' %}
       <span class="badge badge-warning">Resignation Pending HR Review</span>
-      {% elif pending_resignation.status == 'NEGOTIATING' %}
+      {% elif latest_resignation.status == 'NEGOTIATING' %}
       <span class="badge badge-info">HR Has Sent You an Offer — See Below</span>
       {% elif profile.status != 'EXITED' %}
       <a href="{% url 'employees:edit_my_profile' %}" class="btn btn-accent">Edit Profile</a>
@@ -19,16 +19,16 @@
   </div>
 </div>
 
-{% if pending_resignation.status == 'NEGOTIATING' %}
+{% if latest_resignation.status == 'NEGOTIATING' %}
 <div class="card">
   <h3>A Message From HR</h3>
   <div style="padding:14px; background:var(--grey-50); border-radius:8px; margin-bottom:14px;">
-    <p style="margin:0;">{{ pending_resignation.hr_message }}</p>
-    <p style="margin:8px 0 0; font-size:0.75rem; color:var(--grey-500);">— {{ pending_resignation.hr_message_by|default:"HR" }}, {{ pending_resignation.hr_message_at|date:"d M Y, h:i A" }}</p>
+    <p style="margin:0;">{{ latest_resignation.hr_message }}</p>
+    <p style="margin:8px 0 0; font-size:0.75rem; color:var(--grey-500);">— {{ latest_resignation.hr_message_by|default:"HR" }}, {{ latest_resignation.hr_message_at|date:"d M Y, h:i A" }}</p>
   </div>
 
   <div style="display:flex; gap:10px; flex-wrap:wrap;">
-    <form method="post" action="{% url 'employees:accept_resignation_offer' pending_resignation.id %}" style="margin:0;">
+    <form method="post" action="{% url 'employees:accept_resignation_offer' latest_resignation.id %}" style="margin:0;">
       {% csrf_token %}
       <button type="submit" class="btn btn-primary">Accept Offer &amp; Stay</button>
     </form>
@@ -36,7 +36,7 @@
   </div>
 
   <div id="quit-panel" class="negotiate-panel">
-    <form method="post" action="{% url 'employees:quit_after_negotiation' pending_resignation.id %}" style="margin-top:14px;">
+    <form method="post" action="{% url 'employees:quit_after_negotiation' latest_resignation.id %}" style="margin-top:14px;">
       {% csrf_token %}
       <label>Message to HR (optional)</label>
       <textarea name="message" class="form-control" rows="3" placeholder="Let HR know your final decision..."></textarea>
@@ -47,8 +47,14 @@
 {% endif %}
 
 {% if profile.status == 'EXITED' %}
-<div class="card">
-  <p class="empty-state">Your resignation has been accepted. Exit date: {{ profile.exit_date }}.</p>
+<div class="card" style="display:flex; justify-content:space-between; align-items:center;">
+  <p class="empty-state" style="margin:0; text-align:left;">Your resignation has been accepted. Exit date: {{ profile.exit_date }}.</p>
+  <span class="badge" style="background:#10b981; color:white; font-size:1.1rem; padding:8px 16px;">Approved</span>
+</div>
+{% elif latest_resignation and latest_resignation.status == 'REJECTED' %}
+<div class="card" style="display:flex; justify-content:space-between; align-items:center;">
+  <p class="empty-state" style="margin:0; text-align:left;">Your resignation request was rejected by HR on {{ latest_resignation.reviewed_at|date:"M j, Y" }}.</p>
+  <span class="badge badge-danger" style="font-size:1.1rem; padding:8px 16px;">Rejected</span>
 </div>
 {% endif %}
 

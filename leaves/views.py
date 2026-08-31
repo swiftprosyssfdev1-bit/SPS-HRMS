@@ -19,13 +19,26 @@ def _notify(user, leave, message):
     LeaveNotification.objects.create(user=user, leave_request=leave, message=message)
 
 
+def _default_leave_balance(user):
+    """PF-applicable employees don't start with the 12 days upfront —
+    theirs accrues 1/month via the credit_monthly_cl command, so a brand
+    new LeaveBalance row for them starts at 0. Non-PF employees keep the
+    old flat-12-upfront behaviour unchanged."""
+    profile = getattr(user, 'profile', None)
+    if profile and profile.is_pf_applicable:
+        return 0
+    return 12
+
+
 def _apply_balance_deduction(leave):
     """Only full-day Leave requests draw down a balance. Permission
     requests are hour-based and don't touch the leave balance. All leave
-    types (CL/EL/Sick) draw from the same combined 12-day pool."""
+    types (CL/EL/Sick) draw from the same combined pool."""
     if leave.request_type != 'LEAVE':
         return
-    balance, _ = LeaveBalance.objects.get_or_create(user=leave.user)
+    balance, _ = LeaveBalance.objects.get_or_create(
+        user=leave.user, defaults={'balance': _default_leave_balance(leave.user)}
+    )
     balance.balance = max(0, balance.balance - leave.num_days)
     balance.save()
 
@@ -33,7 +46,9 @@ def _apply_balance_deduction(leave):
 @login_required
 def my_leaves(request):
     LeaveNotification.objects.filter(user=request.user, is_read=False).update(is_read=True)
-    balance, _ = LeaveBalance.objects.get_or_create(user=request.user)
+    balance, _ = LeaveBalance.objects.get_or_create(
+        user=request.user, defaults={'balance': _default_leave_balance(request.user)}
+    )
 
     other_hrs = None
     if request.user.role in ('HR', 'SENIOR_HR'):
@@ -230,7 +245,11 @@ def review_leave(request, leave_id, decision):
     # here. HR can no longer stand in — a leave request must be
     # approved/rejected by that specific manager. ----
     if leave.status == 'PENDING_MANAGER':
-        approving_manager = leave.get_manager()
+        # current_approver reflects escalation (e.g. bumped up to a GM
+        # after an SLA breach) — it must win over a fresh get_manager()
+        # call, which would always resolve back to the original PM/CTO
+        # and silently block the escalated approver from acting.
+        approving_manager = leave.current_approver or leave.get_manager()
         if not ((user.is_manager() or user.is_cto()) and approving_manager and approving_manager.id == user.id):
             messages.error(request, "You cannot review this request.")
             return redirect('leaves:approvals')
@@ -309,7 +328,9 @@ def check_leave_balance(request):
         except ValueError:
             return JsonResponse({'error': 'Invalid date format'}, status=400)
 
-        balance, _ = LeaveBalance.objects.get_or_create(user=request.user)
+        balance, _ = LeaveBalance.objects.get_or_create(
+            user=request.user, defaults={'balance': _default_leave_balance(request.user)}
+        )
         available = float(balance.balance)
 
         lop_days = max(0, num_days - available)

@@ -212,25 +212,59 @@ def raise_query_response(user):
 # ---------------------------------------------------------------------------
 
 def projects_response(user):
+    """Role- and permission-aware. Built from chatbot/navigation.py, the
+    single source of truth for the actual sidebar, and from the real
+    lead-only restriction in projects/views.py::submit_project_update
+    (`if project.lead_id != request.user.id: ...`). Never mentions a
+    "My History" sidebar item or a "Submit Update" action the user's
+    role/UI wouldn't actually show them.
+    """
+    from chatbot import navigation as nav
+
     scope = get_data_scope(user)
-    my_url = _url('projects:my_history')
     list_url = _url('projects:list')
     approvals_url = _url('projects:approvals')
+    is_lead = nav.is_project_lead_of_any(user)
 
+    # Manager/HR/Admin/management scopes: they see the full Projects area,
+    # including creating projects and reviewing submitted updates.
     if scope in ('TEAM', 'PROJECT', 'MANAGEMENT', 'BRANCH', 'HR', 'ADMIN'):
-        return (
+        msg = (
             "To manage projects:\n"
-            f"• View all projects → **Projects → Projects List**: {list_url}\n"
-            f"• Review team submissions → **Projects → Approvals**: {approvals_url}\n"
-            f"• Your own project history → **Projects → My History**: {my_url}"
+            f"• Open **Projects** from the left sidebar → {list_url}\n"
+            "  This lists Active / Upcoming / Completed projects; click one for details.\n"
+            f"• Review project updates submitted for review → **Projects → Approvals**: {approvals_url}\n"
         )
-    return (
-        "To view your projects:\n"
-        f"1. Go to **Projects → My History** in the sidebar: {my_url}\n"
-        "2. See all projects you are currently assigned to\n"
-        "3. Click a project to submit a progress update\n\n"
-        f"To browse all active company projects: **Projects → Projects List**: {list_url}"
+        if is_lead:
+            msg += "• On any project you lead, use **Submit Update** on the project's detail page to send an update for review."
+        return msg
+
+    # Regular employee. First check whether Projects is even visible to them —
+    # it requires a project assignment and not being in the Software dept.
+    if not nav.is_visible(user, 'projects'):
+        return (
+            "The **Projects** sidebar item isn't available for you right now — "
+            "it only shows up once you have at least one project assignment "
+            "(and isn't shown for the Software department). "
+            "If you believe you should have a project assigned, check with your manager."
+        )
+
+    msg = (
+        f"Open {nav.nav_line('projects')}.\n\n"
+        "There you'll see the projects you're assigned to — Active, Upcoming, and Completed — "
+        "and you can click into any of them to view its details."
     )
+    if is_lead:
+        msg += (
+            "\n\nSince you're the lead on at least one project, you'll also see a "
+            "**Submit Update** option on that project's detail page to send a progress update for review."
+        )
+    else:
+        msg += (
+            "\n\nSubmitting a project update for review is only available to the project's lead. "
+            "If you need a status update sent, contact your project lead."
+        )
+    return msg
 
 
 # ---------------------------------------------------------------------------

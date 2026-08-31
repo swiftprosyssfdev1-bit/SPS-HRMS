@@ -1,0 +1,77 @@
+{% if leave_category_by_branch %}
+<div class="card">
+  <h3>Leave Analytics This Month — by Branch &amp; Approval Chain</h3>
+  <p style="font-size: 0.9em; color: #666; margin-top: -10px; margin-bottom: 15px;">Approved leave days taken this month per branch, grouped by who approves them (GM / QA Manager / CTO).</p>
+  <div style="display:flex; flex-wrap:wrap; gap:24px;">
+    {% for item in leave_category_by_branch %}
+    <div style="width:260px;">
+      <div style="text-align:center; font-weight:600; margin-bottom:8px;">{{ item.branch }}</div>
+      <div style="width:220px; height:220px; position:relative; margin:0 auto;">
+        <canvas id="leaveCategoryPieChart-{{ forloop.counter0 }}"></canvas>
+      </div>
+      <div id="leave-category-legend-{{ forloop.counter0 }}" style="margin-top:10px; font-size:0.85em;"></div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+    var branches = {{ leave_category_by_branch_json|safe }};
+    var colors = { 'GM': '#4e73df', 'QA Manager': '#1cc88a', 'CTO': '#f6c23e' };
+
+    branches.forEach(function(b, idx) {
+        var labels = [], values = [], bgColors = [], total = 0;
+        b.breakdown.forEach(function(item) {
+            labels.push(item.category);
+            values.push(item.days);
+            bgColors.push(colors[item.category] || '#858796');
+            total += item.days;
+        });
+
+        var legendHtml = '';
+        b.breakdown.forEach(function(item, i) {
+            legendHtml += '<div style="display:flex; justify-content:space-between; padding:2px 0;"><span><span style="display:inline-block;width:10px;height:10px;background:'+bgColors[i]+';margin-right:6px;border-radius:50%;"></span>'+item.category+'</span><strong>'+item.days+'</strong></div>';
+        });
+        var legendEl = document.getElementById('leave-category-legend-' + idx);
+        if (legendEl) legendEl.innerHTML = legendHtml;
+
+        var chartData = values, chartColors = bgColors, chartLabels = labels;
+        var tooltipCallback = function(c) {
+            var item = b.breakdown[c.dataIndex];
+            if (!item) return c.label + ': ' + c.raw + ' days';
+            return [
+                c.label + ': ' + c.raw + ' days total',
+                'CL: ' + item.cl + ' days',
+                'EL: ' + item.el + ' days',
+                'Sick: ' + item.sick + ' days'
+            ];
+        };
+        if (total === 0) {
+            chartData = [1];
+            chartColors = ['#e0e0e0'];
+            chartLabels = ['No Leaves Taken'];
+            tooltipCallback = function() { return 'No leaves taken yet'; };
+        }
+
+        var canvasEl = document.getElementById('leaveCategoryPieChart-' + idx);
+        if (!canvasEl) return;
+        new Chart(canvasEl.getContext('2d'), {
+            type: 'pie',
+            data: {
+                labels: chartLabels,
+                datasets: [{ data: chartData, backgroundColor: chartColors, hoverOffset: 4 }],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { callbacks: { label: tooltipCallback } }
+                }
+            },
+        });
+    });
+});
+</script>
+{% endif %}

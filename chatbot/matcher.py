@@ -542,9 +542,7 @@ NAV_PAGES = [
     (['my payslip', 'payslip', 'pay slip', 'salary slip'], 'payroll:my_payslips', 'Payslips'),
     (['allowance request', 'request allowance'], 'payroll:my_allowance_requests', 'Allowance Requests'),
     (['my project', 'project history'], 'projects:my_history', 'My Project History'),
-    (['project list', 'all projects', 'where to see projects', 'view projects', 'see projects',
-      'projects page', 'show projects', 'where are the projects', 'where to check project',
-      'check project'], 'projects:list', 'Projects'),
+    (['projects', 'project', 'project list', 'all projects', 'where to see projects', 'view projects', 'see projects', 'projects page', 'show projects', 'where are the projects', 'where to check project', 'check project'], 'projects:list', 'Projects'),
     (['daily entry', 'production entry', 'hourly tracker', 'daily tracker'], 'production_tracker:daily_entry', 'My Hourly Tracker'),
     (['my tracker history', 'production history'], 'production_tracker:my_tracker', 'My Tracker History'),
     (['raise a query', 'my queries', 'ask a query', 'contact hr'], 'queries:my_queries', 'Ask a Query'),
@@ -608,11 +606,7 @@ NAV_BARE_FALLBACK = [
 
 def _intent_directory_bare(user, text):
     """Bare 'directory' (no qualifying word like 'employee'/'staff' in front)
-    doesn't match any NAV_PAGES phrase, so it fell through to the fallback
-    reply. Route it by role instead: COO has their own leadership Directory
-    tab on the COO dashboard; HR/Admin have the full employee directory.
-    Other roles don't have a directory page, so leave this unmatched and let
-    it fall through to FAQ/fallback as before."""
+    handled securely for all non-EMPLOYEE roles."""
     if not _any_word(text, 'directory'):
         return None
     if user.is_coo():
@@ -620,14 +614,14 @@ def _intent_directory_bare(user, text):
             url = reverse('core:coo_dashboard')
         except NoReverseMatch:
             return None
-        return f"You can find that under COO Dashboard — Directory tab. Direct link: {url}?tab=directory"
-    if user.is_hr_or_admin():
+        return f"You can find that under COO Dashboard -- Directory tab. Direct link: {url}?tab=directory"
+    if user.role != 'EMPLOYEE':
         try:
             url = reverse('employees:directory')
         except NoReverseMatch:
             return None
         return f"You can find that under Employee Directory. Direct link: {url}"
-    return None
+    return "The Employee Directory is not available to standard employees."
 
 
 def _intent_navigation(user, text):
@@ -1532,8 +1526,8 @@ def _intent_who_am_i(user, text):
         else:
             role = getattr(user, 'role', 'EMPLOYEE').replace('_', ' ').title()
         dept = getattr(user, 'department', None)
-        dept_str = f" in the **{dept.name}** department" if dept else ""
-        return f"You are logged in as **{name}**{dept_str}. Your role in the system is **{role}**."
+        dept_str = f" within the {dept.name} department" if dept else ""
+        return f"You are currently authenticated as {name}. Your designated role is {role}{dept_str}."
     return None
 
 
@@ -1594,6 +1588,12 @@ DYNAMIC_INTENTS = [
     _intent_attendance_navigation,
     _intent_raise_query_navigation,
     _intent_projects_navigation,
+    # Generic NAV_PAGES catch-all (was defined but never wired in — every
+    # question that didn't hit a more specific phrase above, e.g. "where
+    # can I see the projects?", fell through to RAG instead of using this
+    # table, which already had the right route). Kept last among the
+    # navigation intents so specific phrases above still take priority.
+    _intent_navigation,
     _intent_who_is_on_leave_today,
     # Deliberately last: its 'who is' trigger is broad by design (bare-name
     # directory lookups have no more specific pattern to match), so every

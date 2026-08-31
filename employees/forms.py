@@ -326,22 +326,26 @@ class BankDetailForm(forms.ModelForm):
     def clean_ifsc_code(self):
         return self.cleaned_data.get('ifsc_code', '').upper()
 
-class HRDocumentForm(forms.ModelForm):
-    """HR can only upload official, company-issued letters — never an
-    employee's personal documents."""
+class IssueLetterForm(forms.Form):
+    """HR picks a letter type, the employee(s) it's for, and the file to
+    issue. One upload here can go out to any number of employees at once
+    — each gets their own copy of the letter on their Letters page."""
     doc_type = forms.ChoiceField(
         choices=[c for c in EmployeeDocument.DOC_TYPES if c[0] in EmployeeDocument.HR_DOC_TYPES],
-        label="Document Type",
+        label="Letter Type",
     )
+    employees = forms.ModelMultipleChoiceField(
+        queryset=User.objects.none(),
+        widget=forms.CheckboxSelectMultiple,
+        label="Issue To",
+    )
+    file = forms.FileField(label="Letter File")
 
-    class Meta:
-        model = EmployeeDocument
-        fields = ['doc_type', 'file']
-
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, employee_queryset=None, **kwargs):
         super().__init__(*args, **kwargs)
-        for field in self.fields.values():
-            field.widget.attrs.setdefault('class', 'form-control')
+        self.fields['employees'].queryset = employee_queryset if employee_queryset is not None else User.objects.none()
+        self.fields['doc_type'].widget.attrs.setdefault('class', 'form-control')
+        self.fields['file'].widget.attrs.setdefault('class', 'form-control')
 
 
 class SelfDocumentForm(forms.ModelForm):
@@ -588,6 +592,30 @@ class TrainingDurationForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields['training_duration_days'].required = True
+
+
+class NoticePeriodDurationForm(forms.ModelForm):
+    """HR-only form to adjust the notice period duration for an exiting
+    employee."""
+
+    class Meta:
+        model = ResignationRequest
+        fields = ['notice_period_days']
+        widgets = {
+            'notice_period_days': forms.NumberInput(attrs={
+                'class': 'form-control',
+                'min': 0,
+                'max': 365,
+                'style': 'width:80px; min-width:80px;',
+            }),
+        }
+        labels = {
+            'notice_period_days': 'Notice Period (days)',
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['notice_period_days'].required = True
 
 
 class TrainingReviewForm(forms.ModelForm):

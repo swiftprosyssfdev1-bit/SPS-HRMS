@@ -6,9 +6,19 @@ from django.contrib.auth import get_user_model
 class LeaveBalance(models.Model):
     """Combined leave pool — SwiftProsys policy is 12 days/year usable for
     any reason (no separate CL/EL/Sick split). Was previously 3 separate
-    fields (cl_balance/el_balance/sick_balance); collapsed into one."""
+    fields (cl_balance/el_balance/sick_balance); collapsed into one.
+
+    PF-applicable employees (EmployeeProfile.is_pf_applicable) don't get
+    the 12 upfront — their CL accrues 1 day/month, credited only once
+    that month has started (see credit_monthly_cl command). Unused CL
+    carries forward — it's never reset to 0 at month/year end. Non-PF
+    employees are unaffected and keep the full 12 available from day one."""
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='leave_balance')
     balance = models.DecimalField(max_digits=4, decimal_places=1, default=12)
+    # First-of-month date of the last month this user's PF-accrual was
+    # credited for. Null means never credited (e.g. non-PF employees, or
+    # a PF employee who hasn't had the command run for them yet).
+    last_credited_month = models.DateField(null=True, blank=True)
 
     def __str__(self):
         return f"Leave balance - {self.user}"

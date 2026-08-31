@@ -5,7 +5,7 @@ from leaves.models import LeaveRequest
 from leaves.utils import not_expired_leaves
 from core.models import User, Branch
 from core.utils import user_can_switch_branch, get_manager_team
-from employees.models import ResignationRequest, TrainingFeedback
+from employees.models import ResignationRequest, TrainingFeedback, EmployeeDocument
 from attendance.models import OvertimeRequest
 from increments.models import IncrementRequest
 from increments.views import due_for_annual_increment_count
@@ -64,6 +64,13 @@ def notifications(request):
             if last_message is None or last_message.sender_id == q.user_id:
                 query_count += 1
 
+        unread_letters_count = EmployeeDocument.objects.filter(
+            user=user, doc_type__in=EmployeeDocument.HR_DOC_TYPES, viewed_by_employee=False
+        ).count()
+        unread_resignation_updates = ResignationRequest.objects.filter(
+            user=user, status__in=['ACCEPTED', 'REJECTED'], employee_viewed_review=False
+        ).count()
+
         return {
             'leave_approval_count': leave_approval_count,
             'resignation_count': resignation_count,
@@ -75,19 +82,30 @@ def notifications(request):
             'query_count': query_count,
             'allowance_hr_count': allowance_hr_count,
             'training_feedback_hr_count': training_feedback_hr_count,
+            'unread_letters_count': unread_letters_count,
+            'unread_resignation_updates': unread_resignation_updates,
             'notification_count': (
                 leave_approval_count + resignation_count + overtime_hr_count
                 + increment_reports_count + increment_salary_update_count + query_count
                 + allowance_hr_count + increment_due_count + training_feedback_hr_count
+                + unread_letters_count + unread_resignation_updates
             ),
         }
     elif user.role == 'COO':
         increment_coo_pending_count = IncrementRequest.objects.filter(status='PENDING_COO').count()
         leave_coo_count = LeaveRequest.objects.filter(status='PENDING_COO').count()
+        unread_letters_count = EmployeeDocument.objects.filter(
+            user=user, doc_type__in=EmployeeDocument.HR_DOC_TYPES, viewed_by_employee=False
+        ).count()
+        unread_resignation_updates = ResignationRequest.objects.filter(
+            user=user, status__in=['ACCEPTED', 'REJECTED'], employee_viewed_review=False
+        ).count()
         return {
             'increment_coo_pending_count': increment_coo_pending_count,
             'leave_coo_count': leave_coo_count,
-            'notification_count': increment_coo_pending_count + leave_coo_count,
+            'unread_letters_count': unread_letters_count,
+            'unread_resignation_updates': unread_resignation_updates,
+            'notification_count': increment_coo_pending_count + leave_coo_count + unread_letters_count + unread_resignation_updates,
         }
     elif user.is_manager() or user.is_cto():
         active_branch = getattr(request, 'active_branch', None)
@@ -154,6 +172,13 @@ def notifications(request):
                 manager=user, lead__isnull=True
             ).exclude(status='COMPLETED').count()
 
+        unread_letters_count = EmployeeDocument.objects.filter(
+            user=user, doc_type__in=EmployeeDocument.HR_DOC_TYPES, viewed_by_employee=False
+        ).count()
+        unread_resignation_updates = ResignationRequest.objects.filter(
+            user=user, status__in=['ACCEPTED', 'REJECTED'], employee_viewed_review=False
+        ).count()
+
         return {
             'leave_approval_count': leave_approval_count,
             'my_leave_count': my_leave_count,
@@ -163,11 +188,19 @@ def notifications(request):
             'allowance_pm_count': allowance_pm_count,
             'training_feedback_pm_count': training_feedback_pm_count,
             'projects_needing_setup_count': projects_needing_setup_count,
-            'notification_count': leave_approval_count + my_leave_count + overtime_manager_count + query_count + increment_feedback_count + allowance_pm_count + training_feedback_pm_count + projects_needing_setup_count,
+            'unread_letters_count': unread_letters_count,
+            'unread_resignation_updates': unread_resignation_updates,
+            'notification_count': leave_approval_count + my_leave_count + overtime_manager_count + query_count + increment_feedback_count + allowance_pm_count + training_feedback_pm_count + projects_needing_setup_count + unread_letters_count + unread_resignation_updates,
         }
     else:
         my_leave_count = LeaveRequest.objects.filter(
             user=user, status__in=['PENDING_MANAGER', 'PENDING_HR']
+        ).count()
+        unread_letters_count = EmployeeDocument.objects.filter(
+            user=user, doc_type__in=EmployeeDocument.HR_DOC_TYPES, viewed_by_employee=False
+        ).count()
+        unread_resignation_updates = ResignationRequest.objects.filter(
+            user=user, status__in=['ACCEPTED', 'REJECTED'], employee_viewed_review=False
         ).count()
         from projects.models import Project, ProjectAssignment
         is_project_lead_or_tl = Project.objects.filter(lead=user).exists() or ProjectAssignment.objects.filter(
@@ -176,7 +209,9 @@ def notifications(request):
         return {
             'my_leave_count': my_leave_count,
             'is_project_lead_or_tl': is_project_lead_or_tl,
-            'notification_count': my_leave_count,
+            'unread_letters_count': unread_letters_count,
+            'unread_resignation_updates': unread_resignation_updates,
+            'notification_count': my_leave_count + unread_letters_count + unread_resignation_updates,
         }
 
 

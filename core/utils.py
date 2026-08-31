@@ -9,7 +9,7 @@ def get_active_branch(request):
         return getattr(user, 'branch', None)
 
     branch_id = request.session.get('active_branch_id')
-    if branch_id:
+    if branch_id and str(branch_id).isdigit():
         if user.role in ('ADMIN', 'SENIOR_HR', 'COO'):
             branch = Branch.objects.filter(id=branch_id).first()
         else:
