@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
@@ -6,7 +8,10 @@ from django.db.models import Q
 from django.http import JsonResponse
 from datetime import datetime
 from core.utils import get_manager_team
-from leaves.utils import not_expired_leaves, approved_on_leave_today
+from leaves.utils import (
+    not_expired_leaves, approved_on_leave_today,
+    cl_cycle_bounds, pf_leave_quota_for_user, pf_leave_days_remaining_in_cycle,
+)
 
 from core.models import User
 from leaves.models import LeaveRequest, LeaveBalance, LeaveNotification
@@ -30,16 +35,72 @@ def _default_leave_balance(user):
     return 12
 
 
+def _is_pf_cycle_leave(leave):
+    """True when this LEAVE request should use the per-cycle quota model
+    instead of the old pooled 12-day balance. PF-applicable employees
+    don't have separate CL/EL/Sick pools — whichever category is picked
+    on the form draws from the same per-cycle allowance (see
+    leaves.utils.pf_leave_quota_for_user)."""
+    if leave.request_type != 'LEAVE':
+        return False
+    profile = getattr(leave.user, 'profile', None)
+    return bool(profile and profile.is_pf_applicable)
+
+
+def _generic_lop_split(user, num_days, exclude_id=None):
+    """Pooled-balance-vs-pending LOP split — fallback for non-PF
+    employees only. PF employees always use the per-cycle quota model
+    (see _compute_cl_lop_split)."""
+    balance, _ = LeaveBalance.objects.get_or_create(
+        user=user, defaults={'balance': _default_leave_balance(user)}
+    )
+    pending_qs = LeaveRequest.objects.filter(
+        user=user, request_type='LEAVE', status__startswith='PENDING'
+    )
+    if exclude_id:
+        pending_qs = pending_qs.exclude(pk=exclude_id)
+    pending = sum((r.num_days or 0) for r in pending_qs)
+    effectively_available = max(Decimal('0'), balance.balance - Decimal(pending))
+    lop = max(Decimal('0'), Decimal(num_days) - effectively_available)
+    cl = Decimal(num_days) - lop
+    return cl, lop
+
+
+def _compute_cl_lop_split(leave, num_days, end_date):
+    """Returns (covered_days, lop_days) for a full-day LEAVE request.
+    PF-applicable employees get a fixed leave quota per 26th-25th payroll
+    cycle (1 day for regular employees/HR, 2 for Manager/GM/PM/COO/CTO —
+    see pf_leave_quota_for_user), shared across whatever leave category is
+    picked, independent of any banked balance. Non-PF employees fall back
+    to the old pooled 12-day balance. `end_date` must be an actual date
+    object (a real parsed date, not the raw POST string that may still be
+    sitting on leave.end_date at this point)."""
+    if _is_pf_cycle_leave(leave):
+        cycle_start, cycle_end = cl_cycle_bounds(end_date)
+        quota = pf_leave_quota_for_user(leave.user)
+        remaining = pf_leave_days_remaining_in_cycle(leave.user, cycle_start, cycle_end, quota, exclude_id=leave.pk)
+        covered = min(remaining, Decimal(num_days))
+        lop = Decimal(num_days) - covered
+        return covered, lop
+    return _generic_lop_split(leave.user, num_days, exclude_id=leave.pk)
+
+
 def _apply_balance_deduction(leave):
     """Only full-day Leave requests draw down a balance. Permission
-    requests are hour-based and don't touch the leave balance. All leave
-    types (CL/EL/Sick) draw from the same combined pool."""
+    requests are hour-based and don't touch the leave balance. For non-PF
+    employees the cl_days (covered) portion is deducted from the pooled
+    balance — lop_days is unpaid and was never covered by it. For PF
+    employees the per-cycle quota check (see _compute_cl_lop_split) is
+    the actual entitlement, so their LeaveBalance is no longer the source
+    of truth — this still records cl_days there for reference, but
+    nothing currently reads it back for them."""
     if leave.request_type != 'LEAVE':
         return
     balance, _ = LeaveBalance.objects.get_or_create(
         user=leave.user, defaults={'balance': _default_leave_balance(leave.user)}
     )
-    balance.balance = max(0, balance.balance - leave.num_days)
+    amount = leave.cl_days if leave.cl_days else Decimal('0')
+    balance.balance = max(Decimal('0'), balance.balance - amount)
     balance.save()
 
 
@@ -80,6 +141,32 @@ def my_leaves(request):
             if not leave.start_date or not leave.end_date:
                 messages.error(request, "Please choose both a start and end date for the leave request.")
                 return redirect('leaves:my_leaves')
+
+            try:
+                parsed_start = datetime.strptime(leave.start_date, '%Y-%m-%d').date()
+                parsed_end = datetime.strptime(leave.end_date, '%Y-%m-%d').date()
+            except (ValueError, TypeError):
+                messages.error(request, "Invalid start or end date.")
+                return redirect('leaves:my_leaves')
+
+            today = timezone.localdate()
+            # Rule: no backdated leave requests — start date must be
+            # today or later.
+            if parsed_start < today:
+                messages.error(request, "Leave requests can't be backdated — the start date must be today or later.")
+                return redirect('leaves:my_leaves')
+
+            # Note: previously blocked CL requests from reaching into a
+            # payroll cycle that "hadn't started yet" (credit not posted).
+            # That was tied to the old accrual model (1 CL/month credited
+            # into a balance). Under the per-cycle quota model there's no
+            # accrual to wait for — remaining quota for any cycle, past or
+            # future, is just checked live against that cycle's
+            # approved/pending requests — so this restriction no longer
+            # applies and has been removed.
+
+            num_days = (parsed_end - parsed_start).days + 1
+            leave.cl_days, leave.lop_days = _compute_cl_lop_split(leave, num_days, parsed_end)
         else:  # WFH — same date range as Leave, but no leave_type and no
             # balance deduction (see _apply_balance_deduction).
             leave.start_date = request.POST.get('start_date') or None
@@ -88,13 +175,22 @@ def my_leaves(request):
                 messages.error(request, "Please choose both a start and end date for the WFH request.")
                 return redirect('leaves:my_leaves')
 
+            try:
+                parsed_start = datetime.strptime(leave.start_date, '%Y-%m-%d').date()
+            except (ValueError, TypeError):
+                messages.error(request, "Invalid start date.")
+                return redirect('leaves:my_leaves')
+
+            if parsed_start < timezone.localdate():
+                messages.error(request, "WFH requests can't be backdated — the start date must be today or later.")
+                return redirect('leaves:my_leaves')
+
       
         leave.status = leave.initial_status()
         
         # Set escalation fields for PENDING_MANAGER
         if leave.status == 'PENDING_MANAGER':
             leave.current_approver = leave.get_manager()
-            from django.utils import timezone
             leave.sla_deadline = timezone.now() + timezone.timedelta(hours=24)
             
         leave.save()
@@ -159,9 +255,15 @@ def leave_approvals(request):
         context['on_leave_today'] = approved_on_leave_today(active_branch)
 
     elif user.is_cto():
-        # The CTO is the Software department's approval authority —
-        # same role a department Manager plays elsewhere.
-        from django.db.models import Q
+        context['requests'] = LeaveRequest.objects.filter(
+            Q(current_approver=user) | Q(
+                user__department__name__icontains='software',
+                current_approver__isnull=True
+            ),
+            status='PENDING_MANAGER'
+        ).select_related(
+            'user', 'user__profile', 'user__department'
+        )
         context['requests'] = LeaveRequest.objects.filter(
             Q(current_approver=user) | Q(user__department__name__icontains='software', current_approver__isnull=True),
             status='PENDING_MANAGER'
@@ -175,7 +277,6 @@ def leave_approvals(request):
         # so a PM never appears in this actionable list either — the GM
         # only gets read-only visibility into those, added below.
         from core.utils import get_manager_team, get_gm_pms
-        from django.db.models import Q
         team = get_manager_team(user).exclude(role='PROJECT_MANAGER')
         requests_qs = LeaveRequest.objects.filter(
             Q(current_approver=user) | Q(user__in=team, current_approver__isnull=True),
@@ -196,7 +297,6 @@ def leave_approvals(request):
         # their own team — same branch. A Manager's own leave requests
         # never appear here since those route straight to HR.
         team = _team_managed_by(user)
-        from django.db.models import Q
         requests_qs = LeaveRequest.objects.filter(
             Q(current_approver=user) | Q(user__in=team, current_approver__isnull=True),
             status='PENDING_MANAGER'
@@ -328,15 +428,41 @@ def check_leave_balance(request):
         except ValueError:
             return JsonResponse({'error': 'Invalid date format'}, status=400)
 
+        today = timezone.localdate()
+        if start_date < today:
+            return JsonResponse({'error': "Leave can't be backdated — the start date must be today or later."}, status=400)
+
+        profile = getattr(request.user, 'profile', None)
+        if profile and profile.is_pf_applicable:
+            # PF-applicable employees don't have separate CL/EL/Sick
+            # pools — whichever leave_type was picked draws from the same
+            # fixed per-cycle quota (1 day for regular employees/HR, 2
+            # for Manager/GM/PM/COO/CTO), independent of any banked
+            # balance. This replaces the old pooled-balance-vs-pending
+            # calc below, which only applies to non-PF employees now.
+            cycle_start, cycle_end = cl_cycle_bounds(end_date)
+            quota = pf_leave_quota_for_user(request.user)
+            remaining_before = pf_leave_days_remaining_in_cycle(request.user, cycle_start, cycle_end, quota)
+            covered_in_request = min(remaining_before, Decimal(num_days))
+            lop_in_request = Decimal(num_days) - covered_in_request
+
+            return JsonResponse({
+                'is_pf_cl': True,
+                'cycle_start': cycle_start.strftime('%d-%m-%Y'),
+                'cycle_end': cycle_end.strftime('%d-%m-%Y'),
+                'cl_allowed': quota,
+                'cl_used_or_pending': float(Decimal(quota) - remaining_before),
+                'cl_in_request': float(covered_in_request),
+                'lop_in_request': float(lop_in_request),
+                'requested': num_days,
+            })
+
         balance, _ = LeaveBalance.objects.get_or_create(
             user=request.user, defaults={'balance': _default_leave_balance(request.user)}
         )
         available = float(balance.balance)
 
-        lop_days = max(0, num_days - available)
-
-        from datetime import date
-        current_month = date.today().replace(day=1)
+        current_month = today.replace(day=1)
 
         used_qs = LeaveRequest.objects.filter(
             user=request.user,
@@ -353,12 +479,23 @@ def check_leave_balance(request):
         )
         pending = sum(req.num_days for req in pending_qs if req.num_days) or 0
 
+        # LOP (loss-of-pay) days also need to account for already-pending
+        # requests, not just this one — otherwise it under-counts how much
+        # of the requested leave would actually go unpaid once pending
+        # requests are approved too.
+        effectively_available = max(0, available - pending)
+        lop_days = max(0, num_days - effectively_available)
+
         return JsonResponse({
+            'is_pf_cl': False,
             'available_balance': available,
             'used_this_month': used_this_month,
             'pending': pending,
             'requested': num_days,
-            'remaining_after_request': max(0, available - num_days),
+            # Previously ignored `pending` entirely (just available - num_days),
+            # which let someone request more leave than they actually have
+            # left once their already-pending requests get approved too.
+            'remaining_after_request': max(0, available - pending - num_days),
             'lop_days': lop_days,
         })
     return JsonResponse({'error': 'GET request required'}, status=405)

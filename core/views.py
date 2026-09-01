@@ -70,51 +70,155 @@ def _month_to_date_absent_days(user_ids, branch, month_start, end_date):
     return absent_count
 
 
+def _build_approver_lookup():
+    """Reverse-map every employee to the manager(s)/GM(s)/CTO(s) whose
+    team they're actually in, reusing the same rich team-resolution
+    logic (get_gm_scope / get_manager_team) that already powers each
+    manager's own 'Team Leave Analytics' widget — Project assignments,
+    department managers, and direct reports. This means the HR/COO
+    leave-analytics chart resolves names automatically as Projects and
+    Departments are set up normally; it does NOT require hand-setting
+    every employee's Reporting Manager field.
+
+    An employee can legitimately be on more than one GM's team at once
+    (e.g. assigned to two different projects run by two different GMs),
+    so each lookup maps to a LIST of approvers, not a single one."""
+    gm_lookup = {}
+    for gm in User.objects.filter(role=User.ROLE_GENERAL_MANAGER):
+        for member in get_gm_scope(gm):
+            gm_lookup.setdefault(member.id, []).append(gm)
+
+    cto_lookup = {}
+    for cto in User.objects.filter(role=User.ROLE_CTO):
+        for member in get_manager_team(cto):
+            cto_lookup.setdefault(member.id, []).append(cto)
+
+    manager_lookup = {}
+    for mgr in User.objects.filter(role__in=[User.ROLE_MANAGER, User.ROLE_PROJECT_MANAGER]):
+        for member in get_manager_team(mgr):
+            manager_lookup.setdefault(member.id, []).append(mgr)
+
+    return gm_lookup, cto_lookup, manager_lookup
+
+
+def _resolve_approvers(user, gm_lookup, cto_lookup, manager_lookup):
+    """Find every person actually approving this user's leave — usually
+    one, but can be several if the employee is on multiple GMs' teams
+    at once (shared across projects). Prefers the live team-membership
+    lookups (Project/Department driven, no manual setup needed) and
+    only falls back to explicit fields (department.manager / user.manager
+    / branch.manager) if the person genuinely isn't on any manager's
+    resolved team yet. Always returns a list (possibly empty)."""
+    if user.is_software_dept():
+        approvers = cto_lookup.get(user.id, [])
+    elif user.department and user.department.is_qa:
+        approvers = manager_lookup.get(user.id) or gm_lookup.get(user.id) or []
+    else:
+        approvers = gm_lookup.get(user.id) or manager_lookup.get(user.id) or []
+
+    if approvers:
+        # de-dupe while preserving order, in case a manager shows up via
+        # more than one path (e.g. both department.manager and a project)
+        seen = set()
+        unique = []
+        for a in approvers:
+            if a.id not in seen:
+                seen.add(a.id)
+                unique.append(a)
+        return unique
+
+    # Fallback chain for anyone Projects/Departments don't yet link up.
+    dept = user.department
+    if dept and dept.manager_id:
+        return [dept.manager]
+    if user.manager_id and user.manager.is_manager():
+        return [user.manager]
+    if user.branch_id and user.branch.manager_id:
+        return [user.branch.manager]
+    return []
+
+
 def _leave_category_breakdown(user_ids, month_start, end_date):
     """Total approved LEAVE days taken in [month_start, end_date] by the
-    given users, bucketed by which approval chain each employee falls
-    under: Software dept -> CTO, QA dept -> QA Manager, everyone else
-    (Production / default) -> GM. Powers the leave-analytics pie chart
-    on the HR/GM(HR)/COO dashboards."""
-    totals = {
-        'GM': {'total': 0, 'types': {'CL': 0, 'EL': 0, 'SICK': 0}},
-        'QA Manager': {'total': 0, 'types': {'CL': 0, 'EL': 0, 'SICK': 0}},
-        'CTO': {'total': 0, 'types': {'CL': 0, 'EL': 0, 'SICK': 0}}
-    }
+    given users, bucketed by the actual approving manager: Software dept
+    -> that dept's CTO, QA dept -> that dept's QA Manager, everyone else
+    (Production / default) -> their GM. Each bucket is keyed by the real
+    approver (name shown), resolved automatically from Project/Department
+    team membership (see _build_approver_lookup) — not just the generic
+    role — so multiple GMs / CTOs / QA Managers each get their own slice
+    without any manual per-employee setup.
+
+    If an employee is on more than one GM's team at once (shared across
+    projects), their leave days are credited in FULL to every GM whose
+    team includes them — so each GM's slice reflects the complete
+    picture of their own team's leave, rather than one GM silently
+    claiming the employee exclusively. This means the pie's grand total
+    can exceed the employee's actual leave days when they're shared
+    across managers; that's intentional, since this chart is "leave per
+    manager's team", not "total company leave days". Powers the
+    leave-analytics pie chart on the HR/GM(HR)/COO dashboards."""
     if not user_ids:
-        return [{'category': k, 'days': float(v['total']), 'cl': 0.0, 'el': 0.0, 'sick': 0.0} for k, v in totals.items()]
+        return []
 
     requests = LeaveRequest.objects.filter(
         user_id__in=user_ids, request_type='LEAVE', status='APPROVED',
         start_date__gte=month_start, start_date__lte=end_date,
-    ).select_related('user', 'user__department')
+    ).select_related('user', 'user__department', 'user__manager', 'user__branch', 'user__branch__manager')
+
+    gm_lookup, cto_lookup, manager_lookup = _build_approver_lookup()
+    buckets = {}  # key -> {'label', 'role', 'total', 'types'}
 
     for req in requests:
+        user = req.user
+        if user.is_software_dept():
+            role_bucket = 'CTO'
+        elif user.department and user.department.is_qa:
+            role_bucket = 'QA Manager'
+        else:
+            role_bucket = 'GM'
+
+        approvers = _resolve_approvers(user, gm_lookup, cto_lookup, manager_lookup)
         days = req.num_days or 0
         l_type = req.leave_type if req.leave_type in ('CL', 'EL', 'SICK') else 'OTHER'
-        
-        category = None
-        if req.user.is_software_dept():
-            category = 'CTO'
-        elif req.user.department and req.user.department.is_qa:
-            category = 'QA Manager'
+
+        if approvers:
+            for approver in approvers:
+                name = approver.get_full_name() or approver.username
+                label = f"{name} ({role_bucket})"
+                key = f"user:{approver.id}:{role_bucket}"
+                bucket = buckets.setdefault(key, {
+                    'label': label, 'role': role_bucket, 'total': 0,
+                    'types': {'CL': 0, 'EL': 0, 'SICK': 0},
+                })
+                # Full days credited to EVERY approver whose team this
+                # employee is on (not split) — a shared employee's leave
+                # shows in full under each GM, since each GM genuinely
+                # has that person on their team. This means the sum
+                # across all slices can exceed the employee's actual
+                # total leave days when they're shared across managers;
+                # that's intentional here, not a bug.
+                bucket['total'] += days
+                bucket['types'][l_type] = bucket['types'].get(l_type, 0) + days
         else:
-            category = 'GM'
-            
-        totals[category]['total'] += days
-        if l_type not in totals[category]['types']:
-            totals[category]['types'][l_type] = 0
-        totals[category]['types'][l_type] += days
+            label = f"{role_bucket} (Unassigned)"
+            key = f"unassigned:{role_bucket}"
+            bucket = buckets.setdefault(key, {
+                'label': label, 'role': role_bucket, 'total': 0,
+                'types': {'CL': 0, 'EL': 0, 'SICK': 0},
+            })
+            bucket['total'] += days
+            bucket['types'][l_type] = bucket['types'].get(l_type, 0) + days
 
     return [
         {
-            'category': k, 
-            'days': float(v['total']),
-            'cl': float(v['types'].get('CL', 0)),
-            'el': float(v['types'].get('EL', 0)),
-            'sick': float(v['types'].get('SICK', 0))
+            'category': b['label'],
+            'role': b['role'],
+            'days': round(float(b['total']), 2),
+            'cl': round(float(b['types'].get('CL', 0)), 2),
+            'el': round(float(b['types'].get('EL', 0)), 2),
+            'sick': round(float(b['types'].get('SICK', 0)), 2),
         }
-        for k, v in totals.items()
+        for b in sorted(buckets.values(), key=lambda x: -x['total'])
     ]
 
 

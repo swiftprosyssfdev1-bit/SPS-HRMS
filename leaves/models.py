@@ -49,6 +49,18 @@ class LeaveRequest(models.Model):
     start_date = models.DateField(null=True, blank=True)
     end_date = models.DateField(null=True, blank=True)
 
+    # How many of this LEAVE request's days were actually covered
+    # (cl_days) vs went unpaid (lop_days). Computed once at submission —
+    # see leaves.views.my_leaves and leaves.utils.pf_leave_days_remaining_in_cycle
+    # for PF-applicable employees (a fixed leave quota per 26th-25th
+    # cycle — 1 day for regular employees/HR, 2 for Manager/GM/PM/COO/CTO
+    # — shared across whatever leave_type is picked, not split by
+    # category), or the pooled-balance-vs-pending calc for non-PF
+    # employees. Left at 0/0 for non-LEAVE requests (Permission/WFH never
+    # draw a balance).
+    cl_days = models.DecimalField(max_digits=4, decimal_places=1, default=0, blank=True)
+    lop_days = models.DecimalField(max_digits=4, decimal_places=1, default=0, blank=True)
+
     # ---- Permission-only fields ----
     permission_date = models.DateField(null=True, blank=True)
     from_time = models.TimeField(null=True, blank=True)

@@ -184,6 +184,19 @@ class NewEmployeeForm(forms.ModelForm):
         for field in self.fields.values():
             field.widget.attrs.setdefault('class', 'form-control')
 
+    def clean(self):
+        cleaned = super().clean()
+        role = cleaned.get('role')
+        # All branch-scoped roles need a branch — HR/COO dashboards bucket
+        # leave analytics and other reporting by user.branch, so a NULL
+        # branch here silently drops this person out of every branch
+        # pie chart even though the account itself is created fine.
+        if role in (User.ROLE_EMPLOYEE, User.ROLE_MANAGER, User.ROLE_PROJECT_MANAGER,
+                    User.ROLE_GENERAL_MANAGER, User.ROLE_CTO):
+            if not cleaned.get('branch'):
+                self.add_error('branch', "Select a branch for this employee.")
+        return cleaned
+
     def save(self, commit=True):
         user = super().save(commit=False)
         user.set_password(self.cleaned_data['password'])
@@ -247,7 +260,19 @@ class HREmployeeEditForm(forms.ModelForm):
                 manager_qs = manager_qs.filter(branch_id=self.instance.branch_id)
             self.fields['manager'].queryset = manager_qs
 
-            
+    def clean(self):
+        cleaned = super().clean()
+        role = self.instance.role if self.instance and self.instance.pk else None
+        # Same branch-scoping requirement as onboarding: clearing branch
+        # here on a GM/CTO/Manager/PM/Employee would silently drop them
+        # out of every branch-based leave analytics pie chart.
+        if role in (User.ROLE_EMPLOYEE, User.ROLE_MANAGER, User.ROLE_PROJECT_MANAGER,
+                    User.ROLE_GENERAL_MANAGER, User.ROLE_CTO):
+            if not cleaned.get('branch'):
+                self.add_error('branch', "This role must have a branch assigned.")
+        return cleaned
+
+
 class EmployeeIdentityForm(forms.ModelForm):
     designation = forms.CharField(max_length=100, required=False, widget=forms.TextInput(attrs={'class': 'form-control'}))
     gender = forms.ChoiceField(choices=EmployeeProfile.GENDER_CHOICES, required=False, widget=forms.Select(attrs={'class': 'form-control'}))
@@ -504,7 +529,12 @@ class OnboardHRForm(forms.ModelForm):
     def clean(self):
         cleaned = super().clean()
         role = cleaned.get('role')
-        if role in (User.ROLE_EMPLOYEE, User.ROLE_MANAGER):
+        if role in (User.ROLE_EMPLOYEE, User.ROLE_MANAGER, User.ROLE_PROJECT_MANAGER,
+                    User.ROLE_GENERAL_MANAGER, User.ROLE_CTO):
+            # These roles are all branch-scoped: HR/COO dashboards bucket
+            # their leave analytics (and other per-branch reporting) by
+            # user.branch, so a NULL branch here silently drops them out
+            # of every branch pie chart even though the user exists.
             if not cleaned.get('branch'):
                 self.add_error('branch', "Select a branch for this employee.")
         elif role in (User.ROLE_HR, User.ROLE_SENIOR_HR, User.ROLE_ADMIN):

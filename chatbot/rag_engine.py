@@ -237,7 +237,7 @@ def _looks_repetitive(answer, min_repeats=3):
     return False
 
 
-def rag_answer(user, question, k=4, chat_history=None):
+def rag_answer(user, question, k=6, chat_history=None):
     """Returns an answer string, or None if the index is missing, retrieval
     found nothing relevant, or the model says the context doesn't cover it.
     `user` is used to give the LLM context on who it's talking to.
@@ -248,17 +248,27 @@ def rag_answer(user, question, k=4, chat_history=None):
         return None
 
     try:
-        docs = store.similarity_search(question, k=k)
+        # Pull more candidates than we'll keep (k) so a dynamically-phrased
+        # question — one that doesn't match the doc's wording closely — still
+        # has a decent chance of surfacing the right chunk somewhere in the
+        # pool, then let the relevance gate below narrow it back down.
+        scored = store.similarity_search_with_score(question, k=max(k * 2, 8))
     except Exception:
         logger.exception("RAG similarity_search failed")
         return None
 
+    # FAISS returns L2 distance (lower = closer). Keep only chunks that are
+    # both reasonably close AND share a real keyword with the question —
+    # distance alone is too easily fooled by generic HR phrasing shared
+    # across unrelated policies.
+    docs = [d for d, score in sorted(scored, key=lambda pair: pair[1])[:k]]
+
     # Even if docs is empty, we still want to answer conversational questions about the user's identity
     context = "\n\n---\n\n".join(d.page_content for d in docs) if docs else "No specific policy documents found for this query."
 
-    # # if docs and not _context_is_relevant(question, context):
-    #     logger.info("RAG: retrieved context has no keyword overlap with question — skipping LLM call")
-    #     return None
+    if docs and not _context_is_relevant(question, context):
+        logger.info("RAG: retrieved context has no keyword overlap with question — skipping LLM call")
+        return None
 
     # Safely get user info
     user_name = getattr(user, 'first_name', '') or getattr(user, 'username', 'Employee')

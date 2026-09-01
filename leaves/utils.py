@@ -1,5 +1,88 @@
+from decimal import Decimal
+
 from django.db.models import Q
 from django.utils import timezone
+
+
+def cl_cycle_start(d):
+    """The start date (the 26th) of the payroll cycle that contains date
+    `d`. Cycles run 26th-of-month -> 25th-of-next-month, matching payroll
+    — NOT calendar months. e.g. Sep 29 and Oct 2 are both in the same
+    cycle (starts Sep 26); Sep 24 is in the PREVIOUS cycle (starts Aug
+    26)."""
+    if d.day >= 26:
+        year, month = d.year, d.month
+    else:
+        month = d.month - 1
+        year = d.year
+        if month == 0:
+            month = 12
+            year -= 1
+    return d.replace(year=year, month=month, day=26)
+
+
+def cl_cycle_bounds(d):
+    """(cycle_start, cycle_end) for the 26th-25th payroll cycle that
+    contains date `d` — cycle_start is the 26th (see cl_cycle_start),
+    cycle_end is the 25th of the following month."""
+    cycle_start = cl_cycle_start(d)
+    if cycle_start.month == 12:
+        year, month = cycle_start.year + 1, 1
+    else:
+        year, month = cycle_start.year, cycle_start.month + 1
+    cycle_end = cycle_start.replace(year=year, month=month, day=25)
+    return cycle_start, cycle_end
+
+
+# Roles that get 2 leave days/cycle instead of the base 1. Per-org policy:
+# regular employees, HR and Senior HR get 1 day/cycle; Manager, General
+# Manager, Project Manager, COO and CTO get 2. There is no separate
+# CL/EL/Sick split for PF-applicable employees — whichever "Leave
+# Category" is picked on the form draws from the same single per-cycle
+# allowance.
+PF_TWO_DAY_ROLES = ('MANAGER', 'GENERAL_MANAGER', 'PROJECT_MANAGER', 'COO', 'CTO')
+
+
+def pf_leave_quota_for_user(user):
+    """Per-cycle leave-day quota for a PF-applicable employee."""
+    return 2 if user.role in PF_TWO_DAY_ROLES else 1
+
+
+def pf_leave_days_remaining_in_cycle(user, cycle_start, cycle_end, quota, exclude_id=None):
+    """How much of this cycle's per-cycle PF leave quota is still
+    unclaimed, given every approved/pending LEAVE request (any leave_type
+    — CL/EL/Sick aren't tracked separately for PF employees) that
+    overlaps the cycle. This is a hard per-cycle usage cap, independent
+    of any banked LeaveBalance. Returns a Decimal between 0 and `quota`.
+    `exclude_id` lets a request being re-evaluated (e.g. on edit) exclude
+    itself from the "already consumed" count."""
+    from leaves.models import LeaveRequest
+
+    qs = LeaveRequest.objects.filter(
+        user=user, request_type='LEAVE',
+        status__in=['APPROVED', 'PENDING_MANAGER', 'PENDING_HR', 'PENDING_COO', 'HR_REJECTED_PENDING_MANAGER'],
+    )
+    if exclude_id:
+        qs = qs.exclude(pk=exclude_id)
+
+    consumed = Decimal('0')
+    for r in qs:
+        if not r.start_date or not r.end_date:
+            continue
+        overlap_start = max(r.start_date, cycle_start)
+        overlap_end = min(r.end_date, cycle_end)
+        if overlap_start <= overlap_end:
+            # Use the request's own recorded cl_days (the covered
+            # portion) where we have it (the normal case — set at
+            # submission time). Legacy rows saved before cl_days existed
+            # fall back to their full day count for that overlap, since
+            # we can't recover the original split retroactively.
+            if r.cl_days:
+                consumed += r.cl_days
+            else:
+                consumed += Decimal((overlap_end - overlap_start).days + 1)
+
+    return max(Decimal('0'), Decimal(quota) - consumed)
 
 
 def not_expired_leaves(qs, today):

@@ -151,7 +151,22 @@ function setRequestType(type) {
             .then(response => response.json())
             .then(data => {
                 if (data.error) return;
-                
+
+                if (data.is_pf_cl) {
+                    var details = `Leave Cycle: ${data.cycle_start} to ${data.cycle_end}\nLeave Allowed: ${data.cl_allowed} day(s)/cycle\nLeave Used/Pending: ${data.cl_used_or_pending} day\nCovered in this request: ${data.cl_in_request} day\nLOP in this request: ${data.lop_in_request} day`;
+                    detailsBox.textContent = details;
+                    detailsBox.style.display = 'block';
+
+                    if (data.lop_in_request > 0) {
+                        var warnMsg = `You are requesting ${data.requested} day(s).\n`;
+                        if (data.cl_in_request > 0) warnMsg += `${data.cl_in_request} day covered by leave.\n`;
+                        warnMsg += `The remaining ${data.lop_in_request} day(s) will be treated as Loss of Pay (LOP) — leave is capped at ${data.cl_allowed} day(s) per payroll cycle (26th–25th) for your role.`;
+                        warningText.innerText = warnMsg;
+                        warningBox.style.display = 'block';
+                    }
+                    return;
+                }
+
                 var details = `Available Balance: ${data.available_balance} days\nUsed This Month: ${data.used_this_month} days\nPending: ${data.pending} days\nRequested: ${data.requested} days\n\nRemaining after request: ${data.remaining_after_request} days`;
                 detailsBox.textContent = details;
                 detailsBox.style.display = 'block';

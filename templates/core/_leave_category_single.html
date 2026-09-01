@@ -1,7 +1,7 @@
 {% if leave_category_json %}
 <div class="card">
   <h3>Leave Analytics This Month — by Approval Chain</h3>
-  <p style="font-size: 0.9em; color: #666; margin-top: -10px; margin-bottom: 15px;">Approved leave days taken this month, grouped by who approves them (GM / QA Manager / CTO).</p>
+  <p style="font-size: 0.9em; color: #666; margin-top: -10px; margin-bottom: 15px;">Approved leave days taken this month, grouped by the actual manager who approves them.</p>
   <div style="display:flex; flex-wrap:wrap; gap:20px;">
     <div style="width:280px; height:280px; position:relative;">
       <canvas id="leaveCategoryPieChart"></canvas>
@@ -13,13 +13,32 @@
 <script>
 document.addEventListener("DOMContentLoaded", function() {
     var data = {{ leave_category_json|safe }};
-    var colors = { 'GM': '#4e73df', 'QA Manager': '#1cc88a', 'CTO': '#f6c23e' };
+    // Base color per approval-chain role; individual managers within the
+    // same role get a lighter/darker shade of that base so each name is
+    // still visually distinguishable in the pie.
+    var roleColors = { 'GM': '#4e73df', 'QA Manager': '#1cc88a', 'CTO': '#f6c23e' };
+    var roleShadeCounts = {};
+    function shadeFor(role, idx) {
+        var base = roleColors[role] || '#858796';
+        var lighten = (idx % 4) * 12; // 0,12,24,36
+        return lightenHex(base, lighten);
+    }
+    function lightenHex(hex, percent) {
+        var num = parseInt(hex.replace('#',''), 16);
+        var r = Math.min(255, (num >> 16) + Math.round(255 * percent / 100));
+        var g = Math.min(255, ((num >> 8) & 0x00FF) + Math.round(255 * percent / 100));
+        var b = Math.min(255, (num & 0x0000FF) + Math.round(255 * percent / 100));
+        return '#' + (0x1000000 + r*0x10000 + g*0x100 + b).toString(16).slice(1);
+    }
     var labels = [], values = [], bgColors = [], total = 0;
 
     data.forEach(function(item) {
+        var role = item.role || item.category;
+        var idx = roleShadeCounts[role] || 0;
+        roleShadeCounts[role] = idx + 1;
         labels.push(item.category);
         values.push(item.days);
-        bgColors.push(colors[item.category] || '#858796');
+        bgColors.push(shadeFor(role, idx));
         total += item.days;
     });
 
