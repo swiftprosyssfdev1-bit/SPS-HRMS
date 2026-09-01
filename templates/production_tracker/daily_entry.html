@@ -1,4 +1,4 @@
-﻿{% extends 'core/base.html' %}
+{% extends 'core/base.html' %}
 {% block content %}
 <div class="page-header" style="display:flex; justify-content:space-between; align-items:center;">
   <h1>Hourly Production Entry</h1>
@@ -12,7 +12,7 @@
 {% if day_records %}
 <div class="card" style="margin-bottom:16px;">
   <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-    <h3 style="margin:0;">Today's Entries {% if day_records|length > 1 %}({{ day_records|length }} projects){% endif %}</h3>
+    <h3 style="margin:0;">Today's Entries {% if day_records|length > 1 %}({{ day_records|length }} entries){% endif %}</h3>
     <a href="{% url 'production_tracker:daily_entry' %}?date={{ selected_date|date:'Y-m-d' }}&new=1" class="btn btn-outline btn-sm">+ Add New Entry</a>
   </div>
   <table class="table" style="margin:0;">

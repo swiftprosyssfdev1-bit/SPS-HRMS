@@ -88,6 +88,18 @@ class DailyProductionForm(forms.ModelForm):
                     assignments__is_current=True
                 ).distinct()
 
+            # Prevent duplicate project entries per day
+            if self.instance and self.instance.date:
+                existing_qs = DailyProduction.objects.filter(
+                    employee=user,
+                    date=self.instance.date
+                )
+                if self.instance.pk:
+                    existing_qs = existing_qs.exclude(pk=self.instance.pk)
+                
+                existing_project_ids = existing_qs.values_list('project_id', flat=True)
+                self.fields['project'].queryset = self.fields['project'].queryset.exclude(id__in=existing_project_ids)
+
         for field in self.fields.values():
             existing = field.widget.attrs.get('class', '')
             field.widget.attrs['class'] = (existing + ' form-control').strip()
@@ -112,3 +124,22 @@ class DailyProductionForm(forms.ModelForm):
             elif is_pm_gm:
                 # PM/GM can edit PM comments only — not PL's comments
                 self.fields['pl_comments'].disabled = True
+
+    def clean(self):
+        cleaned_data = super().clean()
+        project = cleaned_data.get('project')
+        
+        if project and self.instance and self.instance.date:
+            user = self.instance.employee
+            existing_qs = DailyProduction.objects.filter(
+                employee=user,
+                date=self.instance.date,
+                project=project
+            )
+            if self.instance.pk:
+                existing_qs = existing_qs.exclude(pk=self.instance.pk)
+            
+            if existing_qs.exists():
+                self.add_error('project', f"An entry for the project '{project.name}' already exists for this date.")
+        
+        return cleaned_data
