@@ -1,0 +1,50 @@
+{% extends 'core/base.html' %}
+{% block content %}
+<div class="page-header"><h1>Allowance Request Approvals</h1></div>
+
+<div class="card">
+  <h3 style="margin-top:0;">Pending Your Approval</h3>
+  <table>
+    <tr><th>Employee</th><th>Type</th><th>Month</th><th>Amount</th><th>Reason</th><th>Proof</th><th>Actions</th></tr>
+    {% for r in pending_requests %}
+    <tr>
+      <td>{{ r.user.get_full_name|default:r.user.username }}<br>
+        <span style="color:var(--grey-500); font-size:0.8rem;">{{ r.user.department|default:"-" }}</span>
+      </td>
+      <td>{{ r.get_allowance_type_display }}</td>
+      <td>{{ r.month }}/{{ r.year }}</td>
+      <td>{{ r.amount }}</td>
+      <td>{{ r.reason|default:"-"|truncatewords:8 }}</td>
+      <td><a href="{{ r.proof.url }}" target="_blank">View</a></td>
+      <td style="white-space:nowrap;">
+        <a href="{% url 'payroll:review_allowance_request' r.id 'approve' %}" class="btn btn-primary btn-sm">Approve</a>
+        <a href="{% url 'payroll:review_allowance_request' r.id 'reject' %}" class="btn btn-outline btn-sm">Reject</a>
+      </td>
+    </tr>
+    {% empty %}<tr><td colspan="7" class="empty-state">Nothing pending.</td></tr>{% endfor %}
+  </table>
+</div>
+
+<div class="card">
+  <h3>History</h3>
+  <table>
+    <tr><th>Employee</th><th>Type</th><th>Month</th><th>Amount</th><th>Status</th><th>Reviewed By</th></tr>
+    {% for r in history %}
+    <tr>
+      <td>{{ r.user.get_full_name|default:r.user.username }}</td>
+      <td>{{ r.get_allowance_type_display }}</td>
+      <td>{{ r.month }}/{{ r.year }}</td>
+      <td>{{ r.amount }}</td>
+      <td>
+        {% if r.status == 'APPROVED' %}<span class="badge badge-success">Approved</span>
+        {% elif r.status == 'REJECTED' %}<span class="badge badge-danger">Rejected</span>
+        {% else %}<span class="badge badge-warning">{{ r.get_status_display }}</span>{% endif %}
+      </td>
+      <td>
+        {% if r.reviewed_by_hr %}HR: {{ r.reviewed_by_hr }}{% elif r.reviewed_by_pm %}PM: {{ r.reviewed_by_pm }}{% else %}-{% endif %}
+      </td>
+    </tr>
+    {% empty %}<tr><td colspan="6" class="empty-state">No history yet.</td></tr>{% endfor %}
+  </table>
+</div>
+{% endblock %}

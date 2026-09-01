@@ -1,0 +1,261 @@
+{% extends 'core/base.html' %}
+{% block content %}
+<div class="page-header"><h1>Permission / Leave / WFH Approvals</h1></div>
+
+{% for r in requests %}
+<div class="card approval-card" style="margin-bottom:12px; cursor:pointer;" onclick="toggleApproval('req-{{ r.id }}')">
+  <div style="display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;">
+    <div style="display:flex; align-items:center; gap:20px; flex-wrap:wrap; flex:1; min-width:0;">
+      <div style="min-width:140px;">
+        <p style="margin:0; font-weight:700;">{{ r.user.get_full_name|default:r.user.username }}</p>
+        <p style="margin:2px 0 0; color:var(--grey-500); font-size:0.8rem;">{{ r.user.employee_id|default:"-" }} &middot; {{ r.user.department|default:"-" }}</p>
+      </div>
+      <div style="min-width:130px;">
+        <p style="margin:0; font-size:0.85rem;">{{ r.get_request_type_display }}{% if r.request_type == 'LEAVE' %} &middot; {{ r.get_leave_type_display }}{% endif %}</p>
+        <p style="margin:2px 0 0; color:var(--grey-500); font-size:0.8rem;">
+          {% if r.request_type == 'PERMISSION' %}
+            {{ r.permission_date|date:"M d, Y" }}
+          {% else %}
+            {{ r.start_date|date:"M d, Y" }} &ndash; {{ r.end_date|date:"M d, Y" }} ({{ r.num_days }} day{{ r.num_days|pluralize }})
+          {% endif %}
+        </p>
+      </div>
+    </div>
+    <div style="display:flex; align-items:center; gap:14px; flex-shrink:0;">
+      {% if r.status == 'APPROVED' %}<span class="badge badge-success">Approved</span>
+      {% elif r.status == 'REJECTED' %}<span class="badge badge-danger">Rejected</span>
+      {% elif r.status == 'PENDING_HR' %}<span class="badge badge-warning">Pending HR</span>
+      {% elif r.status == 'PENDING_MANAGER' %}<span class="badge badge-warning">{{ r.pending_approver_label }}</span>
+      {% else %}<span class="badge badge-warning">{{ r.get_status_display }}</span>{% endif %}
+      <span class="history-toggle-arrow" id="arrow-req-{{ r.id }}">&#9656;</span>
+    </div>
+  </div>
+
+  {% with history=r.month_leave_summary %}
+  {% if r.is_long_leave or history %}
+  <div style="margin-top:12px; padding:10px 14px; background:#FFF4E5; border:1px solid #F5A623; border-radius:6px; color:#8A5A00; font-size:0.85rem;" onclick="event.stopPropagation()">
+    {% if r.is_long_leave %}
+    &#9888;&#65039; <strong>Long Leave Alert:</strong> {{ r.long_leave_warning }}
+    {% endif %}
+    {% if history %}
+    {% if r.is_long_leave %}<br style="margin:4px 0;">{% endif %}
+    📋 <strong>Leaves this month (excluding this request):</strong>
+    {{ history|length }} leave{{ history|length|pluralize }} &middot; {{ r.month_leave_days }} day{{ r.month_leave_days|pluralize }}
+    &mdash; {% for h in history %}{{ h.get_leave_type_display }}{% if not forloop.last %}, {% endif %}{% endfor %}
+    {% endif %}
+  </div>
+  {% endif %}
+  {% endwith %}
+
+
+
+  <div id="req-{{ r.id }}" style="display:none; margin-top:16px; padding-top:16px; border-top:1px solid var(--grey-100);" onclick="event.stopPropagation()">
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px 24px; margin-bottom:14px;">
+      <div><label class="field-label">Designation</label><p class="field-value" style="font-size:0.9rem;">{{ r.user.profile.designation|default:"-" }}</p></div>
+      {% if r.request_type == 'PERMISSION' %}
+      <div><label class="field-label">Time</label><p class="field-value" style="font-size:0.9rem;">{{ r.from_time|time:"h:i A" }} &ndash; {{ r.to_time|time:"h:i A" }}{% if r.num_hours %} ({{ r.num_hours }} hrs){% endif %}</p></div>
+      {% endif %}
+    </div>
+
+    <label class="field-label">Reason</label>
+    <p style="margin:0 0 14px;">{{ r.reason|default:"No reason provided." }}</p>
+
+    {% if r.reviewed_by_manager %}
+    <p style="margin:0 0 6px; font-size:0.85rem; color:var(--grey-700);">
+      Reviewed by Manager: <strong>{{ r.reviewed_by_manager }}</strong>{% if r.manager_reviewed_at %} on {{ r.manager_reviewed_at|date:"d M Y, h:i A" }}{% endif %}
+    </p>
+    {% endif %}
+    {% if r.reviewed_by_hr %}
+    <p style="margin:0 0 6px; font-size:0.85rem; color:var(--grey-700);">
+      Reviewed by {% if r.reviewed_by_hr.role == 'COO' %}COO{% else %}HR{% endif %}: <strong>{{ r.reviewed_by_hr }}</strong>{% if r.hr_reviewed_at %} on {{ r.hr_reviewed_at|date:"d M Y, h:i A" }}{% endif %}
+    </p>
+    {% endif %}
+
+    <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:10px;">
+      {% if user.is_manager and r.status == 'PENDING_MANAGER' or user.is_cto and r.status == 'PENDING_MANAGER' or user.role == 'HR' and r.status == 'PENDING_HR' or user.role == 'SENIOR_HR' and r.status == 'PENDING_HR' %}
+      <a href="{% url 'leaves:review_leave' r.id 'reject' %}" class="btn btn-outline btn-sm">Reject</a>
+      <a href="{% url 'leaves:review_leave' r.id 'approve' %}" class="btn btn-primary btn-sm">Approve</a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% empty %}
+<div class="card"><p class="empty-state">No leave requests.</p></div>
+{% endfor %}
+
+{% if on_leave_today is not None %}
+<div class="proj-section" style="margin-top:20px;">
+  {% include 'components/section_header.html' with title="Employees on Leave Today" count=on_leave_today|length %}
+  <div class="card" style="padding:0; overflow:hidden;">
+    <table style="margin:0;">
+      <tr>
+        <th>Employee Name</th><th>Employee ID</th><th>Department</th>
+        <th>Leave Date(s)</th><th>Type</th><th>Status</th>
+      </tr>
+      {% for r in on_leave_today %}
+      <tr>
+        <td>{{ r.user.get_full_name|default:r.user.username }}</td>
+        <td>{{ r.user.employee_id|default:"-" }}</td>
+        <td>{{ r.user.department|default:"-" }}</td>
+        <td>
+          {% if r.request_type == 'PERMISSION' %}
+            {{ r.permission_date|date:"M d, Y" }} ({{ r.from_time|time:"h:i A" }}&ndash;{{ r.to_time|time:"h:i A" }})
+          {% else %}
+            {{ r.start_date|date:"M d, Y" }} &ndash; {{ r.end_date|date:"M d, Y" }}
+          {% endif %}
+        </td>
+        <td>{{ r.get_request_type_display }}{% if r.request_type == 'LEAVE' %} &middot; {{ r.get_leave_type_display }}{% endif %}</td>
+        <td>
+          <span class="badge badge-success">Approved</span>
+          <span style="color:var(--grey-500); font-size:0.78rem; display:block; margin-top:2px;">
+            {% if r.reviewed_by_manager %}by {{ r.reviewed_by_manager.get_full_name|default:r.reviewed_by_manager.username }}{% if r.reviewed_by_manager.role == 'PROJECT_MANAGER' %} (PM){% endif %}
+            {% elif r.reviewed_by_hr %}by {{ r.reviewed_by_hr.get_full_name|default:r.reviewed_by_hr.username }}{% if r.reviewed_by_hr.role == 'COO' %} (COO){% else %} (HR){% endif %}
+            {% else %}-{% endif %}
+          </span>
+        </td>
+      </tr>
+      {% empty %}<tr><td colspan="6" class="empty-state">No employees on leave today.</td></tr>{% endfor %}
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% if team_leave_records is not None %}
+<div class="proj-section" style="margin-top:20px;">
+  {% include 'components/section_header.html' with title="Employees on Leave" count=team_leave_records|length %}
+  <div class="card" style="padding:0; overflow:hidden;">
+    <table style="margin:0;">
+      <tr>
+        <th>Employee Name</th><th>Employee ID</th><th>Department</th>
+        <th>Leave Date(s)</th><th>Type</th><th>Status</th>
+      </tr>
+      {% for r in team_leave_records %}
+      <tr>
+        <td>{{ r.user.get_full_name|default:r.user.username }}</td>
+        <td>{{ r.user.employee_id|default:"-" }}</td>
+        <td>{{ r.user.department|default:"-" }}</td>
+        <td>
+          {% if r.request_type == 'PERMISSION' %}
+            {{ r.permission_date|date:"M d, Y" }}
+          {% else %}
+            {{ r.start_date|date:"M d, Y" }} &ndash; {{ r.end_date|date:"M d, Y" }}
+          {% endif %}
+        </td>
+        <td>{{ r.get_request_type_display }}{% if r.request_type == 'LEAVE' %} &middot; {{ r.get_leave_type_display }}{% endif %}</td>
+        <td>
+          {% if r.status == 'APPROVED' %}
+            <span class="badge badge-success">Approved</span>
+            <span style="color:var(--grey-500); font-size:0.78rem; display:block; margin-top:2px;">
+              {% if r.reviewed_by_manager %}by {{ r.reviewed_by_manager.get_full_name|default:r.reviewed_by_manager.username }}{% if r.reviewed_by_manager.role == 'PROJECT_MANAGER' %} (PM){% endif %}
+              {% elif r.reviewed_by_hr %}by {{ r.reviewed_by_hr.get_full_name|default:r.reviewed_by_hr.username }}{% if r.reviewed_by_hr.role == 'COO' %} (COO){% else %} (HR){% endif %}
+              {% else %}-{% endif %}
+            </span>
+          {% elif r.status == 'REJECTED' %}
+            <span class="badge badge-danger">Rejected</span>
+            <span style="color:var(--grey-500); font-size:0.78rem; display:block; margin-top:2px;">
+              {% if r.reviewed_by_manager %}by {{ r.reviewed_by_manager.get_full_name|default:r.reviewed_by_manager.username }}{% if r.reviewed_by_manager.role == 'PROJECT_MANAGER' %} (PM){% endif %}
+              {% elif r.reviewed_by_hr %}by {{ r.reviewed_by_hr.get_full_name|default:r.reviewed_by_hr.username }}{% if r.reviewed_by_hr.role == 'COO' %} (COO){% else %} (HR){% endif %}
+              {% else %}-{% endif %}
+            </span>
+          {% endif %}
+        </td>
+      </tr>
+      {% empty %}<tr><td colspan="6" class="empty-state">No leave records found.</td></tr>{% endfor %}
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% if pl_team_records is not None %}
+<div class="proj-section" style="margin-top:20px;">
+  {% include 'components/section_header.html' with title="Your Project Team — Leave / Permission Status" subtitle="View-only: approving/rejecting is done by the employee's manager, PM, HR, or CTO." count=pl_team_records|length %}
+  <div class="card" style="padding:0; overflow:hidden;">
+    <table style="margin:0;">
+      <tr>
+        <th>Employee Name</th><th>Employee ID</th><th>Department</th>
+        <th>Leave Date(s)</th><th>Type</th><th>Status</th>
+      </tr>
+      {% for r in pl_team_records %}
+      <tr>
+        <td>{{ r.user.get_full_name|default:r.user.username }}</td>
+        <td>{{ r.user.employee_id|default:"-" }}</td>
+        <td>{{ r.user.department|default:"-" }}</td>
+        <td>
+          {% if r.request_type == 'PERMISSION' %}
+            {{ r.permission_date|date:"M d, Y" }}
+          {% else %}
+            {{ r.start_date|date:"M d, Y" }} &ndash; {{ r.end_date|date:"M d, Y" }}
+          {% endif %}
+        </td>
+        <td>{{ r.get_request_type_display }}{% if r.request_type == 'LEAVE' %} &middot; {{ r.get_leave_type_display }}{% endif %}</td>
+        <td>
+          {% if r.status == 'APPROVED' %}
+            <span class="badge badge-success">Approved</span>
+          {% elif r.status == 'REJECTED' %}
+            <span class="badge badge-danger">Rejected</span>
+          {% elif r.status == 'PENDING_HR' %}
+            <span class="badge badge-info">Approved by PM (Pending HR)</span>
+          {% else %}
+            <span class="badge badge-warning">{{ r.get_status_display }}</span>
+          {% endif %}
+          <span style="color:var(--grey-500); font-size:0.78rem; display:block; margin-top:2px;">
+            {% if r.reviewed_by_manager %}by {{ r.reviewed_by_manager.get_full_name|default:r.reviewed_by_manager.username }}{% if r.reviewed_by_manager.role == 'PROJECT_MANAGER' %} (PM){% elif r.reviewed_by_manager.role == 'CTO' %} (CTO){% endif %}
+            {% elif r.reviewed_by_hr %}by {{ r.reviewed_by_hr.get_full_name|default:r.reviewed_by_hr.username }}{% if r.reviewed_by_hr.role == 'COO' %} (COO){% else %} (HR){% endif %}
+            {% endif %}
+          </span>
+        </td>
+      </tr>
+      {% empty %}<tr><td colspan="6" class="empty-state">No leave records found for your project team.</td></tr>{% endfor %}
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% if pm_leave_requests is not None %}
+<div class="proj-section" style="margin-top:20px;">
+  {% include 'components/section_header.html' with title="Your Project Managers — Leave / Permission Status" subtitle="View-only: PM leave requests are approved or rejected by the COO." count=pm_leave_requests|length %}
+  <div class="card" style="padding:0; overflow:hidden;">
+    <table style="margin:0;">
+      <tr>
+        <th>Project Manager</th><th>Employee ID</th><th>Department</th>
+        <th>Leave Date(s)</th><th>Type</th><th>Status</th>
+      </tr>
+      {% for r in pm_leave_requests %}
+      <tr>
+        <td>{{ r.user.get_full_name|default:r.user.username }}</td>
+        <td>{{ r.user.employee_id|default:"-" }}</td>
+        <td>{{ r.user.department|default:"-" }}</td>
+        <td>
+          {% if r.request_type == 'PERMISSION' %}
+            {{ r.permission_date|date:"M d, Y" }}
+          {% else %}
+            {{ r.start_date|date:"M d, Y" }} &ndash; {{ r.end_date|date:"M d, Y" }}
+          {% endif %}
+        </td>
+        <td>{{ r.get_request_type_display }}{% if r.request_type == 'LEAVE' %} &middot; {{ r.get_leave_type_display }}{% endif %}</td>
+        <td>
+          {% if r.status == 'APPROVED' %}
+            <span class="badge badge-success">Approved</span>
+          {% elif r.status == 'REJECTED' %}
+            <span class="badge badge-danger">Rejected</span>
+          {% else %}
+            <span class="badge badge-warning">{{ r.get_status_display }}</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% empty %}<tr><td colspan="6" class="empty-state">No leave records found for your Project Managers.</td></tr>{% endfor %}
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<script>
+function toggleApproval(id) {
+  var panel = document.getElementById(id);
+  var arrow = document.getElementById('arrow-' + id);
+  var isOpen = panel.style.display !== 'none';
+  panel.style.display = isOpen ? 'none' : 'block';
+  arrow.classList.toggle('open', !isOpen);
+}
+</script>
+{% endblock %}

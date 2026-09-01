@@ -1,0 +1,129 @@
+{% extends 'core/base.html' %}
+{% block content %}
+<div class="page-header">
+  <h1>Issue Letter</h1>
+  <a href="{% url 'employees:directory' %}" class="btn btn-outline btn-sm">&larr; Back to Directory</a>
+</div>
+
+<div class="card">
+  <h3>Issue a Letter</h3>
+  <p style="color:var(--grey-500); font-size:0.85rem; margin-top:-6px;">
+    Pick the letter type, choose who it's for, and upload the file once — every employee you select gets their own copy on their "My Letters" page.
+  </p>
+
+  <form method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+
+    <div style="max-width:360px;">
+      <label>Letter Type</label>
+      {{ form.doc_type }}
+      {% if form.doc_type.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ form.doc_type.errors.0 }}</p>{% endif %}
+    </div>
+
+    <div style="max-width:360px;">
+      <label>Letter File</label>
+      {{ form.file }}
+      {% if form.file.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ form.file.errors.0 }}</p>{% endif %}
+    </div>
+
+    <label style="margin-top:10px;">Issue To</label>
+    {% if form.employees.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-6px 0 10px;">{{ form.employees.errors.0 }}</p>{% endif %}
+
+    <input type="text" id="letter-employee-search" class="form-control" placeholder="Search employees by name..." style="max-width:360px; margin-bottom:10px;">
+
+    <div class="letter-employee-list">
+      <label class="letter-employee-option letter-employee-option-selectall">
+        <input type="checkbox" id="letter-select-all"> Select All
+      </label>
+      <div class="branch-dropdown-divider"></div>
+      {% for checkbox in form.employees %}
+      <label class="letter-employee-option" data-name="{{ checkbox.choice_label|lower }}">
+        {{ checkbox.tag }} {{ checkbox.choice_label }}
+      </label>
+      {% empty %}
+      <p class="empty-state">No employees found for your branch.</p>
+      {% endfor %}
+    </div>
+
+    <button type="submit" class="btn btn-accent" style="margin-top:16px;">Issue Letter</button>
+  </form>
+</div>
+
+<div class="card">
+  <h3>Recently Issued</h3>
+  <table>
+    <tr><th>Employee</th><th>Letter</th><th>Issued</th><th></th></tr>
+    {% for doc in recent_letters %}
+    <tr>
+      <td>{{ doc.user.get_full_name|default:doc.user.username }}</td>
+      <td>{{ doc.get_doc_type_display }}</td>
+      <td>{{ doc.uploaded_at|date:"d M Y" }}</td>
+      <td>
+        <a href="{{ doc.file.url }}" target="_blank" class="btn btn-outline btn-sm" style="margin-right:2px;">View</a>
+        <form method="post" action="{% url 'employees:delete_document' doc.user_id doc.id %}" style="display:inline;" onsubmit="return confirm('Delete this letter?');">
+          {% csrf_token %}
+          <input type="hidden" name="next" value="issue_letter">
+          <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+        </form>
+      </td>
+    </tr>
+    {% empty %}<tr><td colspan="4" class="empty-state">No letters issued yet.</td></tr>{% endfor %}
+  </table>
+</div>
+
+<style>
+  .letter-employee-list {
+    max-width: 480px;
+    max-height: 320px;
+    overflow-y: auto;
+    border: 1px solid var(--grey-300);
+    border-radius: 8px;
+    padding: 8px 4px;
+  }
+  .letter-employee-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 400;
+  }
+  .letter-employee-option:hover { background: var(--grey-50); }
+  .letter-employee-option-selectall { font-weight: 600; border-bottom: 1px solid var(--grey-100); margin-bottom: 4px; }
+  .letter-employee-option input[type="checkbox"] { margin: 0; }
+</style>
+
+<script>
+(function () {
+  var search = document.getElementById('letter-employee-search');
+  var selectAll = document.getElementById('letter-select-all');
+  var list = document.querySelector('.letter-employee-list');
+  if (!list) return;
+
+  var options = Array.prototype.slice.call(
+    list.querySelectorAll('.letter-employee-option:not(.letter-employee-option-selectall)')
+  );
+
+  if (search) {
+    search.addEventListener('input', function () {
+      var term = search.value.trim().toLowerCase();
+      options.forEach(function (opt) {
+        var name = opt.getAttribute('data-name') || '';
+        opt.style.display = name.indexOf(term) !== -1 ? '' : 'none';
+      });
+    });
+  }
+
+  if (selectAll) {
+    selectAll.addEventListener('change', function () {
+      options.forEach(function (opt) {
+        if (opt.style.display === 'none') return;
+        var box = opt.querySelector('input[type="checkbox"]');
+        if (box) box.checked = selectAll.checked;
+      });
+    });
+  }
+})();
+</script>
+{% endblock %}

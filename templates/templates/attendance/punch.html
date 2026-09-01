@@ -1,0 +1,72 @@
+{% extends 'core/base.html' %}
+{% block title %}Attendance - HRMS{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Attendance</h1>
+</div>
+<div class="card punch-clock">
+  {% if record.in_time and record.out_time %}
+    <p>You have completed today's attendance.</p>
+    <p>In: <strong>{{ record.in_time|time:"h:i A" }}</strong> &nbsp;|&nbsp; Out: <strong>{{ record.out_time|time:"h:i A" }}</strong> &nbsp;|&nbsp; Breaks: <strong>{{ record.total_break_minutes }} min</strong> &nbsp;|&nbsp; Total (Excl. Breaks): <strong>{{ record.total_hours }} hrs</strong></p>
+    <td>
+      {% if r.in_time %}
+        {% if r.is_late %}<span class="badge badge-warning">Late</span>{% else %}<span class="badge badge-success">On time</span>{% endif %}
+      {% else %}
+        <span style="color:var(--grey-400);">-</span>
+      {% endif %}
+    </td>
+  {% elif record.in_time %}
+    <p>Punched in at <strong>{{ record.in_time|time:"h:i A" }}</strong></p>
+    {% if record.break_start_time %}
+      <p style="color: #d97706;">Currently on break since <strong>{{ record.break_start_time|time:"h:i A" }}</strong></p>
+      <form method="post" style="display:inline-block; margin-right: 10px;">
+        {% csrf_token %}<input type="hidden" name="action" value="break_out">
+        <button class="btn btn-warning" type="submit">End Break</button>
+      </form>
+    {% else %}
+      {% if record.total_break_minutes > 0 %}
+        <p>Total break time: <strong>{{ record.total_break_minutes }} minutes</strong></p>
+      {% endif %}
+      <div style="display: flex; gap: 10px; justify-content: center; margin-top: 15px;">
+        <form method="post">
+          {% csrf_token %}<input type="hidden" name="action" value="break_in">
+          <button class="btn btn-secondary" style="background-color: #6b7280; color: white;" type="submit">Take a Break</button>
+        </form>
+        <form method="post">
+          {% csrf_token %}<input type="hidden" name="action" value="out">
+          <button class="btn btn-accent" type="submit">Punch Out</button>
+        </form>
+      </div>
+    {% endif %}
+  {% else %}
+    <p>You have not punched in yet today.</p>
+    <form method="post">{% csrf_token %}<input type="hidden" name="action" value="in">
+      <button class="btn btn-primary" type="submit">Punch In</button>
+    </form>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h3>Recent Attendance</h3>
+  <table>
+    <tr><th>Date</th><th>In</th><th>Out</th><th>Hours</th><th>Status</th></tr>
+    {% for r in my_records %}
+   <tr>
+      <td>{{ r.date }}</td>
+      <td>{{ r.in_time|time:"h:i A"|default:"-" }}</td>
+      <td>{{ r.out_time|time:"h:i A"|default:"-" }}</td>
+      <td>{{ r.total_hours }}</td>
+      <td>
+        {% if r.in_time %}
+          <span class="badge badge-success">Present</span>
+        {% else %}
+          <span style="color:var(--grey-400);">-</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% empty %}
+    <tr><td colspan="5" class="empty-state">No attendance records yet.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

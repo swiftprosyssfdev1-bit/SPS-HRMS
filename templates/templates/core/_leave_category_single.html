@@ -1,0 +1,88 @@
+{% if leave_category_json %}
+<div class="card">
+  <h3>Leave Analytics This Month — by Approval Chain</h3>
+  <p style="font-size: 0.9em; color: #666; margin-top: -10px; margin-bottom: 15px;">Approved leave days taken this month, grouped by the actual manager who approves them.</p>
+  <div style="display:flex; flex-wrap:wrap; gap:20px;">
+    <div style="width:280px; height:280px; position:relative;">
+      <canvas id="leaveCategoryPieChart"></canvas>
+    </div>
+    <div id="leave-category-legend" style="flex:1; min-width:200px; display:flex; flex-direction:column; justify-content:center;"></div>
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+    var data = {{ leave_category_json|safe }};
+    // Base color per approval-chain role; individual managers within the
+    // same role get a lighter/darker shade of that base so each name is
+    // still visually distinguishable in the pie.
+    var roleColors = { 'GM': '#4e73df', 'QA Manager': '#1cc88a', 'CTO': '#f6c23e' };
+    var roleShadeCounts = {};
+    function shadeFor(role, idx) {
+        var base = roleColors[role] || '#858796';
+        var lighten = (idx % 4) * 12; // 0,12,24,36
+        return lightenHex(base, lighten);
+    }
+    function lightenHex(hex, percent) {
+        var num = parseInt(hex.replace('#',''), 16);
+        var r = Math.min(255, (num >> 16) + Math.round(255 * percent / 100));
+        var g = Math.min(255, ((num >> 8) & 0x00FF) + Math.round(255 * percent / 100));
+        var b = Math.min(255, (num & 0x0000FF) + Math.round(255 * percent / 100));
+        return '#' + (0x1000000 + r*0x10000 + g*0x100 + b).toString(16).slice(1);
+    }
+    var labels = [], values = [], bgColors = [], total = 0;
+
+    data.forEach(function(item) {
+        var role = item.role || item.category;
+        var idx = roleShadeCounts[role] || 0;
+        roleShadeCounts[role] = idx + 1;
+        labels.push(item.category);
+        values.push(item.days);
+        bgColors.push(shadeFor(role, idx));
+        total += item.days;
+    });
+
+    var legendHtml = '<table class="table" style="width:100%; border-collapse:collapse;"><tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:5px;">Approval Chain</th><th style="text-align:right; border-bottom:1px solid #ddd; padding:5px;">Days</th></tr>';
+    data.forEach(function(item, index) {
+        legendHtml += '<tr><td style="padding:5px;"><span style="display:inline-block;width:12px;height:12px;background:'+bgColors[index]+';margin-right:8px;border-radius:50%;"></span>'+item.category+'</td><td style="text-align:right; padding:5px; font-weight:bold;">'+item.days+'</td></tr>';
+    });
+    legendHtml += '</table>';
+    document.getElementById('leave-category-legend').innerHTML = legendHtml;
+
+    var chartData = values, chartColors = bgColors, chartLabels = labels;
+    var tooltipCallback = function(c) {
+        var item = data[c.dataIndex];
+        if (!item) return c.label + ': ' + c.raw + ' days';
+        return [
+            c.label + ': ' + c.raw + ' days total',
+            'CL: ' + item.cl + ' days',
+            'EL: ' + item.el + ' days',
+            'Sick: ' + item.sick + ' days'
+        ];
+    };
+    if (total === 0) {
+        chartData = [1];
+        chartColors = ['#e0e0e0'];
+        chartLabels = ['No Leaves Taken'];
+        tooltipCallback = function() { return 'No leaves taken yet'; };
+    }
+
+    var ctx = document.getElementById('leaveCategoryPieChart').getContext('2d');
+    new Chart(ctx, {
+        type: 'pie',
+        data: {
+            labels: chartLabels,
+            datasets: [{ data: chartData, backgroundColor: chartColors, hoverOffset: 4 }],
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: { callbacks: { label: tooltipCallback } }
+            }
+        },
+    });
+});
+</script>
+{% endif %}

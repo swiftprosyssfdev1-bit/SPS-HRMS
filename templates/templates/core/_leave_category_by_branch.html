@@ -1,0 +1,89 @@
+{% if leave_category_by_branch %}
+<div class="card">
+  <h3>Leave Analytics This Month — by Branch &amp; Approval Chain</h3>
+  <p style="font-size: 0.9em; color: #666; margin-top: -10px; margin-bottom: 15px;">Approved leave days taken this month per branch, grouped by the actual manager who approves them.</p>
+  <div style="display:flex; flex-wrap:wrap; gap:24px;">
+    {% for item in leave_category_by_branch %}
+    <div style="width:260px;">
+      <div style="text-align:center; font-weight:600; margin-bottom:8px;">{{ item.branch }}</div>
+      <div style="width:220px; height:220px; position:relative; margin:0 auto;">
+        <canvas id="leaveCategoryPieChart-{{ forloop.counter0 }}"></canvas>
+      </div>
+      <div id="leave-category-legend-{{ forloop.counter0 }}" style="margin-top:10px; font-size:0.85em;"></div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+    var branches = {{ leave_category_by_branch_json|safe }};
+    var roleColors = { 'GM': '#4e73df', 'QA Manager': '#1cc88a', 'CTO': '#f6c23e' };
+    function lightenHex(hex, percent) {
+        var num = parseInt(hex.replace('#',''), 16);
+        var r = Math.min(255, (num >> 16) + Math.round(255 * percent / 100));
+        var g = Math.min(255, ((num >> 8) & 0x00FF) + Math.round(255 * percent / 100));
+        var b = Math.min(255, (num & 0x0000FF) + Math.round(255 * percent / 100));
+        return '#' + (0x1000000 + r*0x10000 + g*0x100 + b).toString(16).slice(1);
+    }
+
+    branches.forEach(function(b, idx) {
+        var labels = [], values = [], bgColors = [], total = 0;
+        var roleShadeCounts = {};
+        b.breakdown.forEach(function(item) {
+            var role = item.role || item.category;
+            var shadeIdx = roleShadeCounts[role] || 0;
+            roleShadeCounts[role] = shadeIdx + 1;
+            var base = roleColors[role] || '#858796';
+            labels.push(item.category);
+            values.push(item.days);
+            bgColors.push(lightenHex(base, (shadeIdx % 4) * 12));
+            total += item.days;
+        });
+
+        var legendHtml = '';
+        b.breakdown.forEach(function(item, i) {
+            legendHtml += '<div style="display:flex; justify-content:space-between; padding:2px 0;"><span><span style="display:inline-block;width:10px;height:10px;background:'+bgColors[i]+';margin-right:6px;border-radius:50%;"></span>'+item.category+'</span><strong>'+item.days+'</strong></div>';
+        });
+        var legendEl = document.getElementById('leave-category-legend-' + idx);
+        if (legendEl) legendEl.innerHTML = legendHtml;
+
+        var chartData = values, chartColors = bgColors, chartLabels = labels;
+        var tooltipCallback = function(c) {
+            var item = b.breakdown[c.dataIndex];
+            if (!item) return c.label + ': ' + c.raw + ' days';
+            return [
+                c.label + ': ' + c.raw + ' days total',
+                'CL: ' + item.cl + ' days',
+                'EL: ' + item.el + ' days',
+                'Sick: ' + item.sick + ' days'
+            ];
+        };
+        if (total === 0) {
+            chartData = [1];
+            chartColors = ['#e0e0e0'];
+            chartLabels = ['No Leaves Taken'];
+            tooltipCallback = function() { return 'No leaves taken yet'; };
+        }
+
+        var canvasEl = document.getElementById('leaveCategoryPieChart-' + idx);
+        if (!canvasEl) return;
+        new Chart(canvasEl.getContext('2d'), {
+            type: 'pie',
+            data: {
+                labels: chartLabels,
+                datasets: [{ data: chartData, backgroundColor: chartColors, hoverOffset: 4 }],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { callbacks: { label: tooltipCallback } }
+                }
+            },
+        });
+    });
+});
+</script>
+{% endif %}

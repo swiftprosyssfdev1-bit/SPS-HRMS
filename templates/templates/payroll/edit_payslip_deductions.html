@@ -1,0 +1,26 @@
+{% extends 'core/base.html' %}
+{% block content %}
+<div class="page-header">
+  <h1>Edit Deductions - {{ payslip.user }} ({{ payslip.payroll_run.start_date|date:"F Y" }})</h1>
+  <a href="{% url 'payroll:employee_payroll_history' payslip.user_id %}" class="btn btn-outline btn-sm">&larr; Back</a>
+</div>
+<div class="card">
+  {% if form.errors %}
+  <ul class="messages"><li class="error">Please fix the highlighted fields below.</li></ul>
+  {% endif %}
+  <p class="empty-state" style="margin-top:0;">
+    EPF &amp; ESIC (Rs. {{ payslip.pf_deduction }}) is calculated automatically from attendance and salary structure.
+    Fill in the figures below that vary per pay cycle.
+  </p>
+  <form method="post">
+    {% csrf_token %}
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:0 20px;">
+      <div><label>TDS</label>{{ form.tds }}{% if form.tds.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ form.tds.errors.0 }}</p>{% endif %}</div>
+      <div><label>P. Tax / LWF</label>{{ form.p_tax_lwf }}{% if form.p_tax_lwf.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ form.p_tax_lwf.errors.0 }}</p>{% endif %}</div>
+      <div><label>Bonus (Deduction / Recovery)</label>{{ form.bonus_deduction }}{% if form.bonus_deduction.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ form.bonus_deduction.errors.0 }}</p>{% endif %}</div>
+    </div>
+    <button type="submit" class="btn btn-primary" style="margin-top:10px;">Save &amp; Regenerate PDF</button>
+    <a href="{% url 'payroll:employee_payroll_history' payslip.user_id %}" class="btn btn-outline" style="margin-top:10px;">Cancel</a>
+  </form>
+</div>
+{% endblock %}

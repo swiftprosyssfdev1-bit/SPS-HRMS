@@ -1,0 +1,26 @@
+{% extends 'core/base.html' %}
+{% block content %}
+<div class="page-header">
+  <h1>My Letters</h1>
+</div>
+
+<div class="card">
+  <h3>Official Letters</h3>
+  <p style="color:var(--grey-500); font-size:0.85rem; margin-top:-6px;">
+    Offer, promotion, experience, and other official letters HR has issued to you.
+  </p>
+  <table>
+    <tr><th>Letter</th><th>Issued On</th><th></th></tr>
+    {% for doc in letters %}
+    <tr>
+      <td>{{ doc.get_doc_type_display }}</td>
+      <td>{{ doc.uploaded_at|date:"d M Y" }}</td>
+      <td>
+        <a href="{{ doc.file.url }}" target="_blank" class="btn btn-outline btn-sm" style="margin-right:2px;">View</a>
+        <a href="{% url 'employees:download_document' doc.id %}" class="btn btn-primary btn-sm">Download</a>
+      </td>
+    </tr>
+    {% empty %}<tr><td colspan="3" class="empty-state">No letters have been issued to you yet.</td></tr>{% endfor %}
+  </table>
+</div>
+{% endblock %}

@@ -1,0 +1,49 @@
+{% extends 'core/base.html' %}
+{% block content %}
+<div class="page-header">
+  <h1>My Production Appraisals</h1>
+</div>
+
+<div class="stat-grid">
+  <div class="stat-card"><div class="stat-value">{{ total_target }}</div><div class="stat-label">Month Total Target</div></div>
+  <div class="stat-card"><div class="stat-value">{{ total_actual }}</div><div class="stat-label">Month Total Actual</div></div>
+  <div class="stat-card"><div class="stat-value">{{ avg_efficiency }}%</div><div class="stat-label">Month Avg Efficiency</div></div>
+</div>
+
+{% for group in grouped_appraisals %}
+<div class="card">
+  <h3>{{ group.date|date:"M d, Y" }} (Efficiency: {{ group.efficiency|floatformat:1 }}%)</h3>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Hour Slot</th>
+        <th>Target</th>
+        <th>Actual</th>
+        <th>Efficiency %</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in group.records %}
+      <tr>
+        <td>{{ r.hour_slot }}</td>
+        <td>{{ r.target }}</td>
+        <td>{{ r.actual }}</td>
+        <td>
+            {% if r.efficiency_percentage < 50 %}
+                <span class="badge badge-danger">{{ r.efficiency_percentage|floatformat:1 }}%</span>
+            {% elif r.efficiency_percentage < 80 %}
+                <span class="badge badge-warning">{{ r.efficiency_percentage|floatformat:1 }}%</span>
+            {% else %}
+                <span class="badge badge-success">{{ r.efficiency_percentage|floatformat:1 }}%</span>
+            {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% empty %}
+<div class="card"><p>No appraisals found.</p></div>
+{% endfor %}
+
+{% endblock %}
