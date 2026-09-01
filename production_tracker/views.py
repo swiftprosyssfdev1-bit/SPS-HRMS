@@ -621,34 +621,35 @@ def set_target(request, user_id):
             messages.error(request, "Enter a valid target.")
             return redirect(f"{reverse('production_tracker:dashboard')}?date={selected_date}")
 
-        # project=None is part of the lookup (not just defaults) so this
-        # only ever touches this employee's project-less row for the date
-        # â€” never a project-specific row created by set_project_target.
-        daily, _created = DailyProduction.objects.get_or_create(
+        # Update existing record instead of creating blank 0-hour drafts.
+        dailies = DailyProduction.objects.filter(
             employee=emp_user,
             date=selected_date,
             project=None,
-            defaults={'branch': emp_user.branch},
         )
-        daily.target_day = int(raw)
-        # If this employee's row is linked to a project that has its own
-        # Daily Target configured, that project value always wins â€” target
-        # setting is meant to happen once on the Project now, not per
-        # employee. Manual entry here only sticks for employees with no
-        # project (or a project with no target configured).
-        daily.sync_target_from_project()
-        daily.save(update_fields=['target_day', 'updated_at'])
-        daily.recalculate()
-        if daily.project_id and daily.project.daily_target:
-            messages.success(
-                request,
-                f"{emp_user} is on \"{daily.project.name}\", which has a Daily Target of "
-                f"{daily.project.daily_target} â€” that's what was applied (your entry of {raw} was overridden)."
-                if int(raw) != daily.target_day else
-                f"Target set to {raw} for {emp_user} on {selected_date.strftime('%d-%b-%Y')}."
-            )
+        if dailies.exists():
+            daily = dailies.first()
+            daily.target_day = int(raw)
+            # If this employee's row is linked to a project that has its own
+            # Daily Target configured, that project value always wins — target
+            # setting is meant to happen once on the Project now, not per
+            # employee. Manual entry here only sticks for employees with no
+            # project (or a project with no target configured).
+            daily.sync_target_from_project()
+            daily.save(update_fields=['target_day', 'updated_at'])
+            daily.recalculate()
+            if daily.project_id and daily.project.daily_target:
+                messages.success(
+                    request,
+                    f"{emp_user} is on \"{daily.project.name}\", which has a Daily Target of "
+                    f"{daily.project.daily_target} — that's what was applied (your entry of {raw} was overridden)."
+                    if int(raw) != daily.target_day else
+                    f"Target set to {raw} for {emp_user} on {selected_date.strftime('%d-%b-%Y')}."
+                )
+            else:
+                messages.success(request, f"Target set to {raw} for {emp_user} on {selected_date.strftime('%d-%b-%Y')}.")
         else:
-            messages.success(request, f"Target set to {raw} for {emp_user} on {selected_date.strftime('%d-%b-%Y')}.")
+            messages.warning(request, f"No existing entry found for {emp_user} on {selected_date.strftime('%d-%b-%Y')} to apply target to.")
 
     return redirect(f"{reverse('production_tracker:dashboard')}?date={selected_date}")
 

@@ -220,17 +220,16 @@ def apply_project_daily_target(project, date, work_type='PRODUCTION'):
     member_ids = members.values_list('user_id', flat=True)
     updated = 0
     for uid in member_ids:
-        # Filtering on project AND work_type (not just employee+date) means
-        # this always lands on — or creates — THIS project's own row of
-        # THIS work type for the member, even if they already have other
-        # project/work-type rows for the same date.
-        daily, _created = DailyProduction.objects.get_or_create(
-            employee_id=uid, date=date, project=project, work_type=work_type,
+        # Update existing records for this project, member, and date
+        # instead of creating blank 0-hour drafts.
+        dailies = DailyProduction.objects.filter(
+            employee_id=uid, date=date, project=project, work_type=work_type
         )
-        daily.sync_target_from_project()
-        daily.save(update_fields=['target_day', 'updated_at'])
-        daily.recalculate()
-        updated += 1
+        for daily in dailies:
+            daily.sync_target_from_project()
+            daily.save(update_fields=['target_day', 'updated_at'])
+            daily.recalculate()
+            updated += 1
     return updated
 
 
