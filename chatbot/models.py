@@ -52,6 +52,8 @@ class ChatLog(models.Model):
     SOURCE_CHOICES = [
         ('FAQ', 'FAQ match'),
         ('DATA', 'Live HRMS data'),
+        ('RAG', 'RAG (policy docs / FAQ knowledge base)'),
+        ('SQL', 'Live database query'),
         ('UNKNOWN', 'No match — escalated to HR'),
     ]
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='chatbot_logs')

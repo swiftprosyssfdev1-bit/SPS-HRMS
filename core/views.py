@@ -19,12 +19,12 @@ def _month_to_date_absent_days(user_ids, branch, month_start, end_date):
 
     For each employee, only counts days from max(month_start, their own
     date_joined_company) through end_date, skipping Sundays (the app's
-    existing weekly-off convention — see attendance/utils.py's WKD calc).
+    existing weekly-off convention â€” see attendance/utils.py's WKD calc).
     A day counts as Absent only if there's no attendance punch AND no
     approved leave for that employee on that day.
 
     Note: this app has no Holiday model, so company holidays beyond
-    Sunday can't be auto-excluded here — only join date and Sunday are
+    Sunday can't be auto-excluded here â€” only join date and Sunday are
     accounted for.
     """
     from leaves.utils import approved_on_leave_for_date
@@ -68,6 +68,178 @@ def _month_to_date_absent_days(user_ids, branch, month_start, end_date):
             day += timedelta(days=1)
 
     return absent_count
+
+
+def _build_approver_lookup():
+    """Reverse-map every employee to the manager(s)/GM(s)/CTO(s) whose
+    team they're actually in, reusing the same rich team-resolution
+    logic (get_gm_scope / get_manager_team) that already powers each
+    manager's own 'Team Leave Analytics' widget — Project assignments,
+    department managers, and direct reports. This means the HR/COO
+    leave-analytics chart resolves names automatically as Projects and
+    Departments are set up normally; it does NOT require hand-setting
+    every employee's Reporting Manager field.
+
+    An employee can legitimately be on more than one GM's team at once
+    (e.g. assigned to two different projects run by two different GMs),
+    so each lookup maps to a LIST of approvers, not a single one."""
+    gm_lookup = {}
+    for gm in User.objects.filter(role=User.ROLE_GENERAL_MANAGER):
+        for member in get_gm_scope(gm):
+            gm_lookup.setdefault(member.id, []).append(gm)
+
+    cto_lookup = {}
+    for cto in User.objects.filter(role=User.ROLE_CTO):
+        for member in get_manager_team(cto):
+            cto_lookup.setdefault(member.id, []).append(cto)
+
+    manager_lookup = {}
+    for mgr in User.objects.filter(role__in=[User.ROLE_MANAGER, User.ROLE_PROJECT_MANAGER]):
+        for member in get_manager_team(mgr):
+            manager_lookup.setdefault(member.id, []).append(mgr)
+
+    return gm_lookup, cto_lookup, manager_lookup
+
+
+def _resolve_approvers(user, gm_lookup, cto_lookup, manager_lookup):
+    """Find every person actually approving this user's leave — usually
+    one, but can be several if the employee is on multiple GMs' teams
+    at once (shared across projects). Prefers the live team-membership
+    lookups (Project/Department driven, no manual setup needed) and
+    only falls back to explicit fields (department.manager / user.manager
+    / branch.manager) if the person genuinely isn't on any manager's
+    resolved team yet. Always returns a list (possibly empty)."""
+    if user.is_software_dept():
+        approvers = cto_lookup.get(user.id, [])
+    elif user.department and user.department.is_qa:
+        approvers = manager_lookup.get(user.id) or gm_lookup.get(user.id) or []
+    else:
+        approvers = gm_lookup.get(user.id) or manager_lookup.get(user.id) or []
+
+    if approvers:
+        # de-dupe while preserving order, in case a manager shows up via
+        # more than one path (e.g. both department.manager and a project)
+        seen = set()
+        unique = []
+        for a in approvers:
+            if a.id not in seen:
+                seen.add(a.id)
+                unique.append(a)
+        return unique
+
+    # Fallback chain for anyone Projects/Departments don't yet link up.
+    dept = user.department
+    if dept and dept.manager_id:
+        return [dept.manager]
+    if user.manager_id and user.manager.is_manager():
+        return [user.manager]
+    if user.branch_id and user.branch.manager_id:
+        return [user.branch.manager]
+    return []
+
+
+def _leave_category_breakdown(user_ids, month_start, end_date):
+    """Total approved LEAVE days taken in [month_start, end_date] by the
+    given users, bucketed by the actual approving manager: Software dept
+    -> that dept's CTO, QA dept -> that dept's QA Manager, everyone else
+    (Production / default) -> their GM. Each bucket is keyed by the real
+    approver (name shown), resolved automatically from Project/Department
+    team membership (see _build_approver_lookup) — not just the generic
+    role — so multiple GMs / CTOs / QA Managers each get their own slice
+    without any manual per-employee setup.
+
+    If an employee is on more than one GM's team at once (shared across
+    projects), their leave days are credited in FULL to every GM whose
+    team includes them — so each GM's slice reflects the complete
+    picture of their own team's leave, rather than one GM silently
+    claiming the employee exclusively. This means the pie's grand total
+    can exceed the employee's actual leave days when they're shared
+    across managers; that's intentional, since this chart is "leave per
+    manager's team", not "total company leave days". Powers the
+    leave-analytics pie chart on the HR/GM(HR)/COO dashboards."""
+    if not user_ids:
+        return []
+
+    requests = LeaveRequest.objects.filter(
+        user_id__in=user_ids, request_type='LEAVE', status='APPROVED',
+        start_date__gte=month_start, start_date__lte=end_date,
+    ).select_related('user', 'user__department', 'user__manager', 'user__branch', 'user__branch__manager')
+
+    gm_lookup, cto_lookup, manager_lookup = _build_approver_lookup()
+    buckets = {}  # key -> {'label', 'role', 'total', 'types'}
+
+    for req in requests:
+        user = req.user
+        if user.is_software_dept():
+            role_bucket = 'CTO'
+        elif user.department and user.department.is_qa:
+            role_bucket = 'QA Manager'
+        else:
+            role_bucket = 'GM'
+
+        approvers = _resolve_approvers(user, gm_lookup, cto_lookup, manager_lookup)
+        days = req.num_days or 0
+        l_type = req.leave_type if req.leave_type in ('CL', 'EL', 'SICK') else 'OTHER'
+
+        if approvers:
+            for approver in approvers:
+                name = approver.get_full_name() or approver.username
+                label = f"{name} ({role_bucket})"
+                key = f"user:{approver.id}:{role_bucket}"
+                bucket = buckets.setdefault(key, {
+                    'label': label, 'role': role_bucket, 'total': 0,
+                    'types': {'CL': 0, 'EL': 0, 'SICK': 0},
+                })
+                # Full days credited to EVERY approver whose team this
+                # employee is on (not split) — a shared employee's leave
+                # shows in full under each GM, since each GM genuinely
+                # has that person on their team. This means the sum
+                # across all slices can exceed the employee's actual
+                # total leave days when they're shared across managers;
+                # that's intentional here, not a bug.
+                bucket['total'] += days
+                bucket['types'][l_type] = bucket['types'].get(l_type, 0) + days
+        else:
+            label = f"{role_bucket} (Unassigned)"
+            key = f"unassigned:{role_bucket}"
+            bucket = buckets.setdefault(key, {
+                'label': label, 'role': role_bucket, 'total': 0,
+                'types': {'CL': 0, 'EL': 0, 'SICK': 0},
+            })
+            bucket['total'] += days
+            bucket['types'][l_type] = bucket['types'].get(l_type, 0) + days
+
+    return [
+        {
+            'category': b['label'],
+            'role': b['role'],
+            'days': round(float(b['total']), 2),
+            'cl': round(float(b['types'].get('CL', 0)), 2),
+            'el': round(float(b['types'].get('EL', 0)), 2),
+            'sick': round(float(b['types'].get('SICK', 0)), 2),
+        }
+        for b in sorted(buckets.values(), key=lambda x: -x['total'])
+    ]
+
+
+def _leave_category_by_branch(month_start, end_date):
+    """Per-branch version of _leave_category_breakdown, for GM(HR) and
+    COO â€” both see across every branch, so their dashboard needs one pie
+    per branch instead of a single combined one."""
+    result = []
+    for branch in Branch.objects.all().order_by('code'):
+        user_ids = list(
+            User.objects.filter(branch=branch)
+            .exclude(role__in=['HR', 'SENIOR_HR', 'ADMIN'])
+            .values_list('id', flat=True)
+        )
+        breakdown = _leave_category_breakdown(user_ids, month_start, end_date)
+        result.append({
+            'branch': f"{branch.name} ({branch.code})",
+            'breakdown': breakdown,
+            'has_data': any(item['days'] > 0 for item in breakdown),
+        })
+    return result
 
 
 class HRLoginView(auth_views.LoginView):
@@ -150,7 +322,10 @@ def dashboard(request):
                 y -= 1
         context['month_options'] = month_options
 
-        branches = Branch.objects.all().order_by('code')
+        if active_branch:
+            branches = [active_branch]
+        else:
+            branches = Branch.objects.all().order_by('code')
         branch_stats = []
         
         all_active_profiles = EmployeeProfile.objects.exclude(user__role__in=['ADMIN']).filter(status='ACTIVE').select_related('user', 'user__branch')
@@ -225,6 +400,25 @@ def dashboard(request):
             
         context['branch_stats'] = branch_stats
 
+                # ---- Leave category breakdown (GM / QA Manager / CTO), per
+        # branch — COO sees every branch, so one pie per branch. Uses
+        # the same selected month as the rest of this dashboard. ----
+        import json
+        if active_branch:
+            user_ids = list(
+                User.objects.filter(branch=active_branch)
+                .exclude(role__in=['HR', 'SENIOR_HR', 'ADMIN'])
+                .values_list('id', flat=True)
+            )
+            context['leave_category_json'] = json.dumps(
+                _leave_category_breakdown(user_ids, month_start, month_effective_end)
+            )
+            context['use_single_leave_category'] = True
+        else:
+            context['leave_category_by_branch'] = _leave_category_by_branch(month_start, month_effective_end)
+            context['leave_category_by_branch_json'] = json.dumps(context['leave_category_by_branch'])
+            context['use_single_leave_category'] = False
+
     elif user.role in ('HR', 'SENIOR_HR'):
         from leaves.utils import approved_on_leave_today, approved_on_leave_for_date
 
@@ -284,200 +478,20 @@ def dashboard(request):
         context['exited_employees_count'] = exited_qs.count()
         context['current_month'] = month_start.strftime('%Y-%m')
 
-    else:
-        month_start = today.replace(day=1)
-        context['month_attendance'] = AttendanceRecord.objects.filter(
-            user=user, date__gte=month_start, date__lte=today, in_time__isnull=False
-        ).count()
-        context['my_pending_leaves'] = LeaveRequest.objects.filter(
-            user=user, status__in=['PENDING_MANAGER', 'PENDING_HR']
-        ).count()
-
-        if user.role == 'PROJECT_MANAGER':
-            # Live count of projects this PM is currently assigned to
-            # manage — recomputed on every dashboard load, so it always
-            # reflects the current state, no caching involved.
-            from projects.models import Project
-            context['pm_project_count'] = Project.objects.filter(
-                manager=user, status='APPROVED'
-            ).count()
-    context = {'user': user}
-
-    today = timezone.localdate()
-    context['today_record'] = AttendanceRecord.objects.filter(user=user, date=today).first()
-
-    active_branch = getattr(request, 'active_branch', None)
-
-    if user.role == 'ADMIN':
-        base_qs = EmployeeProfile.objects.select_related('user')
-        if active_branch:
-            base_qs = base_qs.filter(user__branch=active_branch)
-        context['hr_count'] = base_qs.filter(user__role='HR').count()
-        context['manager_count'] = base_qs.filter(user__role='MANAGER').count()
-        context['employee_count'] = base_qs.filter(user__role='EMPLOYEE').count()
-    elif user.role == 'COO':
-        import calendar
-        from datetime import date
-        from leaves.utils import approved_on_leave_today, approved_on_leave_for_date
-        from projects.models import Project
-
-        # ---- Month selector (defaults to the current month) ----
-        month_param = request.GET.get('month')  # expected 'YYYY-MM'
-        try:
-            sel_year, sel_month = (int(p) for p in month_param.split('-'))
-            month_start = date(sel_year, sel_month, 1)
-        except (ValueError, AttributeError, TypeError):
-            month_start = today.replace(day=1)
-        month_end = date(month_start.year, month_start.month, calendar.monthrange(month_start.year, month_start.month)[1])
-        # Cap at today for the current month so we don't count future days as absent.
-        month_effective_end = min(month_end, today)
-        days_elapsed = max(0, (month_effective_end - month_start).days + 1)
-
-        context['selected_month'] = month_start.strftime('%Y-%m')
-        # Last 12 months (including current) for the dropdown, newest first.
-        month_options = []
-        y, m = today.year, today.month
-        for _ in range(12):
-            month_options.append({'value': f'{y:04d}-{m:02d}', 'label': date(y, m, 1).strftime('%B %Y')})
-            m -= 1
-            if m == 0:
-                m = 12
-                y -= 1
-        context['month_options'] = month_options
-
-        branches = Branch.objects.all().order_by('code')
-        branch_stats = []
-        
-        all_active_profiles = EmployeeProfile.objects.exclude(user__role__in=['ADMIN']).filter(status='ACTIVE').select_related('user', 'user__branch')
-        
-        for branch in branches:
-            branch_profiles = [p for p in all_active_profiles if p.user.branch_id == branch.id]
-            total_emp = len(branch_profiles)
-            
-            branch_user_ids = {p.user_id for p in branch_profiles}
-            
-            present = AttendanceRecord.objects.filter(
-                date=today, in_time__isnull=False, user_id__in=branch_user_ids
-            ).values('user_id').distinct().count()
-            
-            on_leave = sum(
-                1 for r in approved_on_leave_today(branch) if r.user_id in branch_user_ids
+                # ---- Leave category breakdown (GM / QA Manager / CTO) ----
+        # Plain HR only sees their own branch, so one combined pie.
+        # GM (HR) = SENIOR_HR sees across every branch, so it splits
+        # into one pie per branch, same as the COO dashboard.
+        import json
+        if user.role == 'SENIOR_HR' and not active_branch:
+            context['leave_category_by_branch'] = _leave_category_by_branch(month_start, today)
+            context['leave_category_by_branch_json'] = json.dumps(context['leave_category_by_branch'])
+            context['use_single_leave_category'] = False
+        else:
+            context['leave_category_json'] = json.dumps(
+                _leave_category_breakdown(active_user_ids, month_start, today)
             )
-            
-            absent = max(0, total_emp - present - on_leave)
-            
-            active_projects = Project.objects.filter(
-                manager__branch=branch, status='APPROVED'
-            ).count()
-
-            new_joiners = EmployeeProfile.objects.exclude(user__role='ADMIN').filter(
-                user__branch=branch,
-                user__date_joined_company__gte=month_start,
-                user__date_joined_company__lte=month_end,
-            ).count()
-
-            exited_employees = EmployeeProfile.objects.exclude(user__role='ADMIN').filter(
-                user__branch=branch,
-                status='EXITED',
-                exit_date__gte=month_start,
-                exit_date__lte=month_end,
-            ).count()
-
-            # ---- Month-to-date present / absent / on-leave for this branch ----
-            if days_elapsed > 0:
-                present_month = AttendanceRecord.objects.filter(
-                    date__gte=month_start, date__lte=month_effective_end,
-                    in_time__isnull=False, user_id__in=branch_user_ids
-                ).values('user_id', 'date').distinct().count()
-
-                on_leave_month = 0
-                day = month_start
-                while day <= month_effective_end:
-                    on_leave_month += sum(
-                        1 for r in approved_on_leave_for_date(day, branch) if r.user_id in branch_user_ids
-                    )
-                    day += timedelta(days=1)
-
-                absent_month = _month_to_date_absent_days(
-                    branch_user_ids, branch, month_start, month_effective_end
-                )
-            else:
-                present_month = on_leave_month = absent_month = 0
-            
-            branch_stats.append({
-                'branch': branch,
-                'total_employees': total_emp,
-                'present': present,
-                'absent': absent,
-                'on_leave': on_leave,
-                'active_projects': active_projects,
-                'new_joiners': new_joiners,
-                'exited_employees': exited_employees,
-                'present_month': present_month,
-                'absent_month': absent_month,
-                'on_leave_month': on_leave_month,
-            })
-            
-        context['branch_stats'] = branch_stats
-
-    elif user.role in ('HR', 'SENIOR_HR'):
-        from leaves.utils import approved_on_leave_today, approved_on_leave_for_date
-
-        base_qs = EmployeeProfile.objects.exclude(user__role__in=['HR', 'SENIOR_HR', 'ADMIN'])
-        if active_branch:
-            base_qs = base_qs.filter(user__branch=active_branch)
-
-        context['total_employees'] = base_qs.count()
-        active_profiles = base_qs.filter(status='ACTIVE')
-        context['active_employees'] = active_profiles.count()
-        context['inactive_employees'] = context['total_employees'] - context['active_employees']
-
-        active_user_ids = set(active_profiles.values_list('user_id', flat=True))
-
-        present_today_count = AttendanceRecord.objects.filter(
-            date=today, in_time__isnull=False, user_id__in=active_user_ids
-        ).values('user_id').distinct().count()
-
-        on_leave_today_count = sum(
-            1 for r in approved_on_leave_today(active_branch) if r.user_id in active_user_ids
-        )
-
-        context['present_today'] = present_today_count
-        context['on_leave_today'] = on_leave_today_count
-        context['absent_today'] = max(0, context['active_employees'] - present_today_count - on_leave_today_count)
-
-        month_start = today.replace(day=1)
-
-        # ---- Monthly present / absent / on-leave totals (month-to-date) ----
-        present_month_count = AttendanceRecord.objects.filter(
-            date__gte=month_start, date__lte=today, in_time__isnull=False, user_id__in=active_user_ids
-        ).values('user_id', 'date').distinct().count()
-
-        on_leave_month_count = 0
-        day = month_start
-        while day <= today:
-            on_leave_month_count += sum(
-                1 for r in approved_on_leave_for_date(day, active_branch) if r.user_id in active_user_ids
-            )
-            day += timedelta(days=1)
-
-        absent_month_count = _month_to_date_absent_days(
-            active_user_ids, active_branch, month_start, today
-        )
-
-        context['present_month'] = present_month_count
-        context['on_leave_month'] = on_leave_month_count
-        context['absent_month'] = absent_month_count
-
-        joiners_qs = base_qs.filter(
-            user__date_joined_company__gte=month_start, user__date_joined_company__lte=today
-        )
-        exited_qs = base_qs.filter(
-            status='EXITED', exit_date__gte=month_start, exit_date__lte=today
-        )
-        context['new_joiners_count'] = joiners_qs.count()
-        context['exited_employees_count'] = exited_qs.count()
-        context['current_month'] = month_start.strftime('%Y-%m')
+            context['use_single_leave_category'] = True
 
     else:
         month_start = today.replace(day=1)
@@ -494,7 +508,7 @@ def dashboard(request):
 
         if user.role == 'PROJECT_MANAGER':
             # Live count of projects this PM is currently assigned to
-            # manage — recomputed on every dashboard load, so it always
+            # manage â€” recomputed on every dashboard load, so it always
             # reflects the current state, no caching involved.
             from projects.models import Project
             context['pm_project_count'] = Project.objects.filter(
@@ -502,44 +516,60 @@ def dashboard(request):
             ).count()
         elif user.role == 'MANAGER' and not is_qa_manager:
             context['team_size'] = get_manager_team(user).count()
-        # GENERAL_MANAGER, CTO, QA MANAGER: no Team Members / Pending Leave card — see
+        # GENERAL_MANAGER, CTO, QA MANAGER: no Team Members / Pending Leave card â€” see
         # dashboard.html, which shows only "Days Present This Month" for them.
 
-    # Leave Analytics for Pie Chart - Team Aggregate for Managers Only
+    # Leave Analytics for Doughnut Chart - Team Aggregate for Managers Only
+    # NOTE: LeaveBalance only tracks ONE combined pool (see leaves/models.py
+    # docstring) â€” there is no per-type (CL/EL/SICK) allocated/remaining
+    # balance in this schema. So:
+    #   - "Used" per leave type comes from approved LeaveRequest records
+    #     (leave_type is a label on the request, grouped/summed here).
+    #   - "Remaining" is the single combined LeaveBalance.balance total â€”
+    #     it is NOT split by leave type, because that split doesn't exist
+    #     in the database. Never derive one from the other.
     context['show_leave_analytics'] = False
     if user.is_manager():
         from leaves.models import LeaveBalance
         import json
-        
+
         if user.role == 'GENERAL_MANAGER':
             team = get_gm_scope(user)
         else:
             team = get_manager_team(user)
-        
+
         team_ids = list(team.values_list('id', flat=True))
-        
-        leave_analytics = []
-        try:
+
+        if team_ids:
+            month_start = today.replace(day=1)
+
+            leave_type_labels = {'CL': 'Casual Leave', 'EL': 'Earned Leave', 'SICK': 'Sick Leave'}
+            used_by_type = {'CL': 0, 'EL': 0, 'SICK': 0}
+
+            approved_requests = LeaveRequest.objects.filter(
+                user_id__in=team_ids, request_type='LEAVE', status='APPROVED',
+                leave_type__in=['CL', 'EL', 'SICK'],
+                start_date__gte=month_start, start_date__lte=today,
+            )
+            for req in approved_requests:
+                days = req.num_days or 0
+                used_by_type[req.leave_type] += days
+
+            total_used = sum(used_by_type.values())
+
             bals = LeaveBalance.objects.filter(user_id__in=team_ids)
-            total_cl_used = sum(12 - b.cl_balance for b in bals)
-            total_cl_remaining = sum(b.cl_balance for b in bals)
-            
-            total_el_used = sum(15 - b.el_balance for b in bals)
-            total_el_remaining = sum(b.el_balance for b in bals)
-            
-            total_sl_used = sum(8 - b.sick_balance for b in bals)
-            total_sl_remaining = sum(b.sick_balance for b in bals)
-            
+            total_remaining = sum(b.balance for b in bals)
+
             if bals.exists():
                 leave_analytics = [
-                    {'category': 'Casual Leave', 'used': float(total_cl_used), 'remaining': float(total_cl_remaining)},
-                    {'category': 'Earned Leave', 'used': float(total_el_used), 'remaining': float(total_el_remaining)},
-                    {'category': 'Sick Leave',   'used': float(total_sl_used), 'remaining': float(total_sl_remaining)},
+                    {'type': t, 'label': leave_type_labels[t], 'used': float(used_by_type[t])}
+                    for t in ('CL', 'EL', 'SICK')
                 ]
                 context['leave_analytics_json'] = json.dumps(leave_analytics)
+                context['leave_total_used'] = float(total_used)
+                context['leave_total_remaining'] = float(total_remaining)
                 context['show_leave_analytics'] = True
                 context['team_analytics_count'] = bals.count()
-        except Exception as e:
-            pass
+                context['leave_analytics_month'] = month_start.strftime('%B %Y')
 
     return render(request, 'core/dashboard.html', context)

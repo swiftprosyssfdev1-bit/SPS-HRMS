@@ -122,25 +122,41 @@
     var typing = addMessage('Typing...', 'bot');
     typing.classList.add('hr-chatbot-msg-typing');
 
+    // 180-second timeout — the local LLM (qwen3.5:4b) runs on CPU and can
+    // be slow; this prevents the "Typing..." bubble from hanging forever.
+    var controller = new AbortController();
+    var timeoutId = setTimeout(function () { controller.abort(); }, 180000);
+
     fetch('/chatbot/ask/', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-CSRFToken': getCsrfToken()
       },
-      body: JSON.stringify({ message: text })
+      body: JSON.stringify({ message: text }),
+      signal: controller.signal
     })
       .then(function (res) { return res.json(); })
       .then(function (data) {
+        clearTimeout(timeoutId);
         typing.remove();
         addMessage(data.reply || "Sorry, something went wrong.", 'bot');
         if (data.options && data.options.length) {
           addOptions(data.options, data.message || text);
         }
       })
-      .catch(function () {
+      .catch(function (err) {
+        clearTimeout(timeoutId);
         typing.remove();
-        addMessage("Sorry, I couldn't reach the server. Please try again.", 'bot');
+        if (err && err.name === 'AbortError') {
+          addMessage(
+            "Sorry, that's taking longer than expected. The HR assistant is " +
+            "thinking — please try a simpler question or try again in a moment.",
+            'bot'
+          );
+        } else {
+          addMessage("Sorry, I couldn't reach the server. Please try again.", 'bot');
+        }
       });
   });
 })();

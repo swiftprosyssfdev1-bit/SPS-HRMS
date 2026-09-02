@@ -51,7 +51,12 @@ def chatbot_ask(request):
     if not message:
         return JsonResponse({"reply": "Please type a question."}, status=400)
 
-    result = get_reply(request.user, message)
+    # Short-term memory for follow-up questions ("what about casual leave?").
+    # Kept in the session (not the DB) — resets per browser session, which is
+    # fine for this purpose and needs no schema change / migration.
+    history = request.session.get('chatbot_history', [])
+
+    result = get_reply(request.user, message, chat_history=history)
 
     ChatLog.objects.create(
         user=request.user,
@@ -59,6 +64,12 @@ def chatbot_ask(request):
         answer_source=result["source"],
         matched_faq=result["faq"],
     )
+
+    # Only remember turns that produced a real answer — an UNKNOWN reply is
+    # a dead end, not context worth carrying into the next question.
+    if result["source"] != "UNKNOWN":
+        history.append({"q": message[:500], "a": result["reply"][:500]})
+        request.session['chatbot_history'] = history[-2:]
 
     if result["source"] == "UNKNOWN":
         # Don't auto-escalate — let the employee choose what happens next.

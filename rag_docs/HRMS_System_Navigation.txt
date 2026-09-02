@@ -1,0 +1,98 @@
+SPS HRMS System Navigation & Features Guide
+
+=== DASHBOARD ===
+The Dashboard is the main landing page. It shows your attendance summary, leave balance, and company announcements. Click Dashboard or the company logo in the sidebar to go there.
+
+=== PAYSLIP / PAYROLL ===
+To download your monthly salary slip (payslip):
+1. Click Payroll in the left sidebar
+2. Click My Payslips
+3. Find the month you want
+4. Click the Download PDF button
+The PDF will be saved directly to your computer.
+
+HR Note: To manage payroll for all employees, go to Payroll > Payroll Runs.
+
+=== ATTENDANCE ===
+To view your attendance history:
+1. Click Attendance in the sidebar
+2. Click My Attendance
+You can see your daily punch-in and punch-out times and monthly records.
+
+To mark your attendance (punch in/out): Click Attendance > Punch in the sidebar.
+
+Managers/HR: Go to Attendance > Team Monthly Register to view the full team sheet.
+
+=== LEAVES & PERMISSIONS ===
+To apply for leave, permission, or WFH (Work From Home):
+1. Click Leaves in the sidebar
+2. Click My Leaves
+3. Click the Apply button
+4. Choose the type: Leave, Permission, or WFH
+5. Fill in the dates, times, and reason
+6. Click Submit - your manager will be notified automatically
+
+To check your leave balance, ask the chatbot: what is my leave balance?
+
+Managers/HR: Go to Leaves > Leave Approvals to approve or reject pending requests.
+
+=== PRODUCTION TRACKER / HOURLY TRACKER ===
+The Production Tracker is for employees working on projects with a daily output target.
+
+For Employees - To fill your daily entry:
+1. Click Production Tracker in the left sidebar
+2. Click Daily Entry
+3. Fill in your hourly production numbers
+4. Click Save
+
+For Managers/HR - To view team performance dashboard:
+- Click Production Tracker > Dashboard
+- You can see each employee's daily target vs achievement
+- You can set individual targets from the dashboard
+
+To view your past production history: Production Tracker > My Tracker History
+
+=== PROJECTS ===
+To view your assigned projects:
+- Click Projects > My History in the sidebar
+
+To submit a project progress update:
+1. Go to Projects > My History
+2. Click on the project name
+3. Click Submit Update and fill in the details
+4. Submit - your manager will be notified
+
+Managers: Go to Projects > Approvals to review and approve team submissions.
+
+=== EMPLOYEE DIRECTORY ===
+To find a colleague's contact info, department, or manager:
+- Click Employees > Directory in the sidebar
+- Use the search box to find anyone by name or department
+
+=== QUERIES / HELPDESK ===
+To raise a question or complaint to HR or your Manager:
+1. Click Queries in the sidebar
+2. Click My Queries
+3. Click New Query
+4. Choose who to send it to: HR, Manager, or Admin
+5. Type your question or issue
+6. Click Submit
+HR/Manager will be notified and will reply to your query in the system.
+
+=== APPRAISAL & INCREMENT ===
+To view your appraisal history or calculate your expected increment:
+- Click Increments > Appraisal Calculator in the sidebar
+- Enter your current CTC and performance rating to see an estimate
+
+HR: Go to Increments > All Increments to manage increment requests.
+
+=== LOGOUT ===
+To log out: Click Logout at the bottom of the left sidebar.
+
+=== ROLE-BASED SIDEBAR ACCESS ===
+Different roles see different items in the sidebar:
+- Employees: Dashboard, Attendance (My Attendance, Punch), Leaves (My Leaves), Payroll (My Payslips), Projects (My History), Production Tracker (Daily Entry, My Tracker History), Queries (My Queries)
+- Managers: All of the above PLUS Team Attendance, Leave Approvals, Team Queries, Projects Approvals, Production Tracker Dashboard
+- HR: All of the above PLUS Payroll Runs, Onboard Employee, Increment Management, Attendance Reports, All Leaves
+- COO/Senior Management: Company-wide reports, branch-level data, management dashboards
+- Admin: System settings, user management, full access to all modules

@@ -69,12 +69,6 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'prostaff.wsgi.application'
 
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.sqlite3',
-#         'NAME': BASE_DIR / 'db.sqlite3',
-#     }
-# }
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
@@ -128,6 +122,12 @@ CRISPY_TEMPLATE_PACK = 'bootstrap5'
 #   EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD')
 EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')
 DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'hrms@example.com')
+
+# --- Chatbot RAG (local, via Ollama + Chroma) ---
+RAG_DOCS_DIR = BASE_DIR / 'rag_docs'      # drop HR policy PDFs/Word docs here
+RAG_CHROMA_DIR = BASE_DIR / 'rag_index'   # persistent vector store, auto-created
+RAG_EMBED_MODEL = os.getenv('RAG_EMBED_MODEL', 'nomic-embed-text')
+RAG_LLM_MODEL = os.getenv('RAG_LLM_MODEL', 'qwen3.5:4b')
 
 
 # force reload
