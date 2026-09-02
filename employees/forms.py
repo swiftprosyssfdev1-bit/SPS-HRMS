@@ -184,6 +184,19 @@ class NewEmployeeForm(forms.ModelForm):
         for field in self.fields.values():
             field.widget.attrs.setdefault('class', 'form-control')
 
+    def clean(self):
+        cleaned = super().clean()
+        role = cleaned.get('role')
+        # All branch-scoped roles need a branch — HR/COO dashboards bucket
+        # leave analytics and other reporting by user.branch, so a NULL
+        # branch here silently drops this person out of every branch
+        # pie chart even though the account itself is created fine.
+        if role in (User.ROLE_EMPLOYEE, User.ROLE_MANAGER, User.ROLE_PROJECT_MANAGER,
+                    User.ROLE_GENERAL_MANAGER, User.ROLE_CTO):
+            if not cleaned.get('branch'):
+                self.add_error('branch', "Select a branch for this employee.")
+        return cleaned
+
     def save(self, commit=True):
         user = super().save(commit=False)
         user.set_password(self.cleaned_data['password'])
@@ -247,7 +260,19 @@ class HREmployeeEditForm(forms.ModelForm):
                 manager_qs = manager_qs.filter(branch_id=self.instance.branch_id)
             self.fields['manager'].queryset = manager_qs
 
-            
+    def clean(self):
+        cleaned = super().clean()
+        role = self.instance.role if self.instance and self.instance.pk else None
+        # Same branch-scoping requirement as onboarding: clearing branch
+        # here on a GM/CTO/Manager/PM/Employee would silently drop them
+        # out of every branch-based leave analytics pie chart.
+        if role in (User.ROLE_EMPLOYEE, User.ROLE_MANAGER, User.ROLE_PROJECT_MANAGER,
+                    User.ROLE_GENERAL_MANAGER, User.ROLE_CTO):
+            if not cleaned.get('branch'):
+                self.add_error('branch', "This role must have a branch assigned.")
+        return cleaned
+
+
 class EmployeeIdentityForm(forms.ModelForm):
     designation = forms.CharField(max_length=100, required=False, widget=forms.TextInput(attrs={'class': 'form-control'}))
     gender = forms.ChoiceField(choices=EmployeeProfile.GENDER_CHOICES, required=False, widget=forms.Select(attrs={'class': 'form-control'}))
@@ -326,22 +351,26 @@ class BankDetailForm(forms.ModelForm):
     def clean_ifsc_code(self):
         return self.cleaned_data.get('ifsc_code', '').upper()
 
-class HRDocumentForm(forms.ModelForm):
-    """HR can only upload official, company-issued letters — never an
-    employee's personal documents."""
+class IssueLetterForm(forms.Form):
+    """HR picks a letter type, the employee(s) it's for, and the file to
+    issue. One upload here can go out to any number of employees at once
+    — each gets their own copy of the letter on their Letters page."""
     doc_type = forms.ChoiceField(
         choices=[c for c in EmployeeDocument.DOC_TYPES if c[0] in EmployeeDocument.HR_DOC_TYPES],
-        label="Document Type",
+        label="Letter Type",
     )
+    employees = forms.ModelMultipleChoiceField(
+        queryset=User.objects.none(),
+        widget=forms.CheckboxSelectMultiple,
+        label="Issue To",
+    )
+    file = forms.FileField(label="Letter File")
 
-    class Meta:
-        model = EmployeeDocument
-        fields = ['doc_type', 'file']
-
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, employee_queryset=None, **kwargs):
         super().__init__(*args, **kwargs)
-        for field in self.fields.values():
-            field.widget.attrs.setdefault('class', 'form-control')
+        self.fields['employees'].queryset = employee_queryset if employee_queryset is not None else User.objects.none()
+        self.fields['doc_type'].widget.attrs.setdefault('class', 'form-control')
+        self.fields['file'].widget.attrs.setdefault('class', 'form-control')
 
 
 class SelfDocumentForm(forms.ModelForm):
@@ -500,7 +529,12 @@ class OnboardHRForm(forms.ModelForm):
     def clean(self):
         cleaned = super().clean()
         role = cleaned.get('role')
-        if role in (User.ROLE_EMPLOYEE, User.ROLE_MANAGER):
+        if role in (User.ROLE_EMPLOYEE, User.ROLE_MANAGER, User.ROLE_PROJECT_MANAGER,
+                    User.ROLE_GENERAL_MANAGER, User.ROLE_CTO):
+            # These roles are all branch-scoped: HR/COO dashboards bucket
+            # their leave analytics (and other per-branch reporting) by
+            # user.branch, so a NULL branch here silently drops them out
+            # of every branch pie chart even though the user exists.
             if not cleaned.get('branch'):
                 self.add_error('branch', "Select a branch for this employee.")
         elif role in (User.ROLE_HR, User.ROLE_SENIOR_HR, User.ROLE_ADMIN):
@@ -588,6 +622,30 @@ class TrainingDurationForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields['training_duration_days'].required = True
+
+
+class NoticePeriodDurationForm(forms.ModelForm):
+    """HR-only form to adjust the notice period duration for an exiting
+    employee."""
+
+    class Meta:
+        model = ResignationRequest
+        fields = ['notice_period_days']
+        widgets = {
+            'notice_period_days': forms.NumberInput(attrs={
+                'class': 'form-control',
+                'min': 0,
+                'max': 365,
+                'style': 'width:80px; min-width:80px;',
+            }),
+        }
+        labels = {
+            'notice_period_days': 'Notice Period (days)',
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['notice_period_days'].required = True
 
 
 class TrainingReviewForm(forms.ModelForm):

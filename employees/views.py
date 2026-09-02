@@ -2,6 +2,7 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied
+from django.core.files.base import ContentFile
 from django.db.models import Q
 from django.utils import timezone
 from django.urls import reverse
@@ -13,7 +14,7 @@ from core.utils import user_can_switch_branch
 from attendance.models import AttendanceRecord
 from employees.models import EmployeeProfile, EmployeeDocument, ResignationRequest, BankDetail, TrainingFeedback
 from employees.forms import (
-    EmployeeSelfEditForm, NewEmployeeForm, HRDocumentForm, SelfDocumentForm,
+    EmployeeSelfEditForm, NewEmployeeForm, IssueLetterForm, SelfDocumentForm,
     RoleChangeForm, ResignationRequestForm, HREmployeeEditForm,
     EmployeeIdentityForm, BankDetailForm, OnboardHRForm,
     TrainingFeedbackForm, TrainingDurationForm, TrainingReviewForm,
@@ -128,14 +129,18 @@ def my_profile(request):
     profile, _ = EmployeeProfile.objects.get_or_create(user=request.user)
     bank_detail, _ = BankDetail.objects.get_or_create(user=request.user)
     documents = request.user.documents.all()
-    pending_resignation = ResignationRequest.objects.filter(
-        user=request.user, status__in=['PENDING', 'NEGOTIATING']
+    latest_resignation = ResignationRequest.objects.filter(
+        user=request.user
     ).order_by('-submitted_at').first()
+    
+    if latest_resignation and latest_resignation.status in ['ACCEPTED', 'REJECTED'] and not latest_resignation.employee_viewed_review:
+        latest_resignation.employee_viewed_review = True
+        latest_resignation.save(update_fields=['employee_viewed_review'])
 
     return render(request, 'employees/my_profile.html', {
         'profile': profile, 'bank_detail': bank_detail, 'documents': documents,
         'can_apply_resignation': _can_apply_resignation(request.user),
-        'pending_resignation': pending_resignation,
+        'latest_resignation': latest_resignation,
     })
 
 
@@ -271,6 +276,30 @@ def approve_resignation(request, resignation_id):
 
         # approve() sets profile.status='EXITED', exit_date and exit_reason.
         resignation.approve(hr_user=request.user, notice_period_days=days)
+        
+        from django.core.mail import send_mail
+        from django.conf import settings
+        
+        # Notify Employee
+        if resignation.user.email:
+            send_mail(
+                subject='Resignation Approved',
+                message=f'Dear {resignation.user.get_full_name()},\n\nYour resignation has been approved by HR. You are required to serve a notice period of {days} days. Your final exit date will be {resignation.exit_date}.\n\nBest regards,\nHR Team',
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[resignation.user.email],
+                fail_silently=True,
+            )
+        
+        # Notify Manager
+        if resignation.user.manager and resignation.user.manager.email:
+            send_mail(
+                subject='Team Member Resignation Approved',
+                message=f'Dear {resignation.user.manager.get_full_name()},\n\nThe resignation of your team member {resignation.user.get_full_name()} has been approved by HR. They will serve a notice period of {days} days and their final exit date is {resignation.exit_date}.\n\nBest regards,\nHR Team',
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[resignation.user.manager.email],
+                fail_silently=True,
+            )
+
         messages.success(
             request,
             f"Resignation approved for {resignation.user}. Notice period: {days} days. Exit date: {resignation.exit_date}."
@@ -290,6 +319,30 @@ def reject_resignation(request, resignation_id):
 
     if request.method == 'POST':
         resignation.reject(hr_user=request.user)
+        
+        from django.core.mail import send_mail
+        from django.conf import settings
+        
+        # Notify Employee
+        if resignation.user.email:
+            send_mail(
+                subject='Resignation Rejected',
+                message=f'Dear {resignation.user.get_full_name()},\n\nYour resignation request has been reviewed and rejected by HR. If you have any questions, please reach out to the HR department.\n\nBest regards,\nHR Team',
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[resignation.user.email],
+                fail_silently=True,
+            )
+            
+        # Notify Manager
+        if resignation.user.manager and resignation.user.manager.email:
+            send_mail(
+                subject='Team Member Resignation Rejected',
+                message=f'Dear {resignation.user.manager.get_full_name()},\n\nThe resignation request of your team member {resignation.user.get_full_name()} has been rejected by HR.\n\nBest regards,\nHR Team',
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[resignation.user.manager.email],
+                fail_silently=True,
+            )
+
         messages.info(request, f"Resignation rejected for {resignation.user}.")
     return redirect('employees:resignation_list')
 
@@ -640,7 +693,6 @@ def employee_detail(request, user_id):
     profile, _ = EmployeeProfile.objects.get_or_create(user=emp_user)
     bank_detail, _ = BankDetail.objects.get_or_create(user=emp_user)
     documents = emp_user.documents.all()
-    doc_form = HRDocumentForm()
     role_form = RoleChangeForm(instance=emp_user, acting_user=request.user)
     latest_resignation = ResignationRequest.objects.filter(user=emp_user).first()
     can_review_resignation = _can_review_resignation(request.user, latest_resignation) if latest_resignation else False
@@ -656,7 +708,7 @@ def employee_detail(request, user_id):
 
     return render(request, 'employees/employee_detail.html', {
         'emp_user': emp_user, 'profile': profile, 'bank_detail': bank_detail,
-        'documents': documents, 'doc_form': doc_form,
+        'documents': documents,
         'role_form': role_form, 'latest_resignation': latest_resignation,
         'can_review_resignation': can_review_resignation,
         'salary_structure': salary_structure,
@@ -697,27 +749,81 @@ def update_employee_status(request, user_id):
 
 
 @hr_only_required
-def upload_document(request, user_id):
-    emp_user = get_object_or_404(User, id=user_id)
+def issue_letter(request):
+    """HR issues an official letter (offer, promotion, experience,
+    relieving, appointment, increment) to one or more employees in one
+    go. Each selected employee gets their own copy of the file, visible
+    on their own Letters page — HR/Admin accounts are never a valid
+    recipient here."""
+    active_branch = getattr(request, 'active_branch', None)
+    employee_queryset = User.objects.exclude(role__in=['ADMIN', 'HR', 'SENIOR_HR']).select_related('department', 'branch')
+    if active_branch:
+        employee_queryset = employee_queryset.filter(branch=active_branch)
+    employee_queryset = employee_queryset.order_by('first_name', 'username')
+
+    preselect_id = request.GET.get('employee')
+
     if request.method == 'POST':
-        form = HRDocumentForm(request.POST, request.FILES)
+        form = IssueLetterForm(request.POST, request.FILES, employee_queryset=employee_queryset)
         if form.is_valid():
-            doc = form.save(commit=False)
-            doc.user = emp_user
-            doc.uploaded_by = request.user
-            doc.save()
-            messages.success(request, 'Document uploaded.')
-    return redirect('employees:edit_employee_profile', user_id=emp_user.id)
+            doc_type = form.cleaned_data['doc_type']
+            recipients = form.cleaned_data['employees']
+            uploaded_file = form.cleaned_data['file']
+
+            for recipient in recipients:
+                uploaded_file.seek(0)
+                EmployeeDocument.objects.create(
+                    user=recipient,
+                    doc_type=doc_type,
+                    file=ContentFile(uploaded_file.read(), name=uploaded_file.name),
+                    uploaded_by=request.user,
+                )
+
+            names = ', '.join((r.get_full_name() or r.username) for r in recipients)
+            messages.success(request, f'Letter issued to {recipients.count()} employee(s): {names}.')
+            return redirect('employees:issue_letter')
+        else:
+            messages.error(request, 'Please fix the errors below.')
+    else:
+        initial = {}
+        if preselect_id and preselect_id.isdigit():
+            initial['employees'] = [int(preselect_id)]
+        form = IssueLetterForm(employee_queryset=employee_queryset, initial=initial)
+
+    recent_letters = EmployeeDocument.objects.filter(
+        doc_type__in=EmployeeDocument.HR_DOC_TYPES
+    ).select_related('user').order_by('-uploaded_at')[:15]
+
+    return render(request, 'employees/issue_letter.html', {
+        'form': form,
+        'recent_letters': recent_letters,
+    })
+
+
+@login_required
+def my_letters(request):
+    """Every employee/manager's own page for the official letters HR has
+    issued to them — offer, promotion, experience, relieving, etc.
+    Opening this page clears the "new letter" sidebar badge."""
+    letters = request.user.documents.filter(
+        doc_type__in=EmployeeDocument.HR_DOC_TYPES
+    ).order_by('-uploaded_at')
+    letters.filter(viewed_by_employee=False).update(viewed_by_employee=True)
+    return render(request, 'employees/my_letters.html', {'letters': letters})
 
 
 @hr_only_required
 def delete_document(request, user_id, doc_id):
-    """HR removes a document from an employee's profile."""
+    """HR removes a document from an employee's profile. Redirects back
+    to wherever the delete was triggered from (edit profile page or the
+    Issue Letter page's Recently Issued list)."""
     emp_user = get_object_or_404(User, id=user_id)
     doc = get_object_or_404(EmployeeDocument, id=doc_id, user=emp_user)
     if request.method == 'POST':
         doc.delete()
         messages.success(request, 'Document deleted.')
+    if request.POST.get('next') == 'issue_letter':
+        return redirect('employees:issue_letter')
     return redirect('employees:edit_employee_profile', user_id=emp_user.id)
 
 
@@ -807,14 +913,13 @@ def edit_employee_profile(request, user_id):
         bank_form = BankDetailForm(instance=bank_detail)
 
     documents = emp_user.documents.all()
-    doc_form = HRDocumentForm()
     role_form = RoleChangeForm(instance=emp_user, acting_user=request.user)
     salary_structure, _ = SalaryStructure.objects.get_or_create(user=emp_user, defaults={'basic': 0})
     salary_form = SalaryStructureForm(instance=salary_structure)
 
     return render(request, 'employees/edit_employee_profile.html', {
         'emp_user': emp_user, 'form': form, 'identity_form': identity_form, 'bank_form': bank_form,
-        'documents': documents, 'doc_form': doc_form, 'role_form': role_form,
+        'documents': documents, 'role_form': role_form,
         'profile': profile, 'bank_detail': bank_detail, 'salary_form': salary_form,
         'is_admin_viewer': request.user.role == 'ADMIN',
         # FIXED: was hardcoded to 'HR' only in the duplicate definition that
@@ -1219,6 +1324,73 @@ def export_appraisals(request):
 # ---------------------------------------------------------------------------
 # Training Feedback views
 # ---------------------------------------------------------------------------
+
+from datetime import timedelta
+
+@login_required
+def notice_period_list(request):
+    if request.user.role not in ('HR', 'SENIOR_HR'):
+        messages.error(request, "You do not have permission to view this page.")
+        return redirect('core:dashboard')
+
+    active_branch = getattr(request, 'active_branch', None)
+
+    qs = ResignationRequest.objects.select_related(
+        'user', 'user__department', 'user__branch', 'user__profile'
+    ).filter(status='ACCEPTED', user__profile__status='EXITED')
+
+    if active_branch:
+        qs = qs.filter(user__branch=active_branch)
+
+    if request.method == 'POST':
+        from employees.forms import NoticePeriodDurationForm
+        rr_id = request.POST.get('rr_id')
+        rr = get_object_or_404(ResignationRequest, id=rr_id)
+        duration_form = NoticePeriodDurationForm(request.POST, instance=rr)
+        if duration_form.is_valid():
+            new_days = duration_form.cleaned_data['notice_period_days']
+            if rr.reviewed_at:
+                new_exit = timezone.localtime(rr.reviewed_at).date() + timedelta(days=new_days)
+            else:
+                new_exit = timezone.localdate() + timedelta(days=new_days)
+            
+            rr.exit_date = new_exit
+            rr.notice_period_days = new_days
+            rr.save()
+            
+            profile = rr.user.profile
+            profile.exit_date = new_exit
+            profile.save()
+            
+            messages.success(
+                request,
+                f"Notice period updated to {new_days} days for {rr.user.get_full_name()}."
+            )
+        else:
+            messages.error(request, "Invalid duration value.")
+        return redirect('employees:notice_period_list')
+
+    from employees.forms import NoticePeriodDurationForm
+    records = []
+    today = timezone.localdate()
+    for rr in qs:
+        # Only show employees currently serving notice period (exit date in future)
+        if rr.exit_date and rr.exit_date < today:
+            continue
+            
+        days_left = (rr.exit_date - today).days if rr.exit_date else 0
+        records.append({
+            'rr': rr,
+            'days_left': days_left,
+            'duration_form': NoticePeriodDurationForm(instance=rr),
+        })
+        
+    records.sort(key=lambda x: x['days_left'])
+
+    return render(request, 'employees/notice_period_list.html', {
+        'records': records,
+        'active_branch': active_branch,
+    })
 
 @login_required
 def training_feedback_list(request):

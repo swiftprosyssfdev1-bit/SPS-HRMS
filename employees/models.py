@@ -171,6 +171,9 @@ class EmployeeDocument(models.Model):
     file = models.FileField(upload_to='employee_docs/')
     uploaded_at = models.DateTimeField(auto_now_add=True)
     uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name='uploaded_documents')
+    # Only meaningful for HR-issued letters. Flips to True once the
+    # employee opens their My Letters page — drives the sidebar badge.
+    viewed_by_employee = models.BooleanField(default=False)
 
     def __str__(self):
         return f"{self.get_doc_type_display()} - {self.user}"
@@ -209,6 +212,7 @@ class ResignationRequest(models.Model):
 
     reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='resignations_reviewed')
     reviewed_at = models.DateTimeField(null=True, blank=True)
+    employee_viewed_review = models.BooleanField(default=False)
 
     class Meta:
         ordering = ['-submitted_at']
