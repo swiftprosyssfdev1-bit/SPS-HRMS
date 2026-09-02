@@ -506,37 +506,84 @@ def appreciation_report(request):
     if request.user.role not in ('HR', 'SENIOR_HR', 'GENERAL_MANAGER', 'COO', 'ADMIN'):
         messages.error(request, 'Permission denied.')
         return redirect('core:dashboard')
+    import calendar
     import datetime
     from django.db.models import Count, Q
     from projects.models import Project, ProjectAssignment
     from leaves.models import LeaveRequest
+    from attendance.models import AttendanceRecord
+
     today = datetime.date.today()
     first_of_this = today.replace(day=1)
     last_month_date = first_of_this - datetime.timedelta(days=1)
     month = int(request.GET.get('month', last_month_date.month))
     year = int(request.GET.get('year', last_month_date.year))
+
+    first_day = datetime.date(year, month, 1)
+    last_day = datetime.date(year, month, calendar.monthrange(year, month)[1])
+    # Don't hold today's/future's un-punched days against anyone if the
+    # selected month is still in progress.
+    if last_day > today:
+        last_day = today
+
     active_branch = getattr(request, 'active_branch', request.user.branch if request.user.role in ('HR', 'SENIOR_HR') else None)
     # Active projects
     projects = Project.objects.filter(status__in=['PENDING', 'APPROVED', 'COMPLETED'])
     if active_branch and not getattr(request.user, 'can_access_all_branches', False):
         projects = projects.filter(Q(manager__branch=active_branch) | Q(created_by__branch=active_branch)).distinct()
+
     perfect_projects = []
     for project in projects:
         # Get all employees assigned to this project
-        team_user_ids = ProjectAssignment.objects.filter(project=project, is_current=True).values_list('user_id', flat=True)
+        team_user_ids = list(ProjectAssignment.objects.filter(project=project, is_current=True).values_list('user_id', flat=True))
         if not team_user_ids:
             continue
-        # Check if any team member took leave in this month/year
+        if first_day > last_day:
+            # Selected month hasn't started yet - nothing to appreciate.
+            continue
+
+        # 1) Nobody on the team has a leave/permission/WFH request touching
+        #    this month.
         leaves_taken = LeaveRequest.objects.filter(
             user_id__in=team_user_ids,
             status__in=['APPROVED', 'PENDING_HR', 'PENDING_MANAGER'],
             start_date__year=year,
             start_date__month=month
         ).exists()
-        if not leaves_taken:
-            # No leaves taken by anyone on the team!
-            project.team_size = len(team_user_ids)
-            perfect_projects.append(project)
+        if leaves_taken:
+            continue
+
+        # 2) Everybody actually punched in on every working day (Mon-Sat)
+        #    up to today. A missing LeaveRequest row only proves they didn't
+        #    ask for leave - it does NOT prove they showed up and worked.
+        punched_days = set(
+            AttendanceRecord.objects.filter(
+                user_id__in=team_user_ids,
+                date__gte=first_day, date__lte=last_day,
+                in_time__isnull=False,
+            ).values_list('user_id', 'date')
+        )
+        join_dates = dict(
+            User.objects.filter(id__in=team_user_ids).values_list('id', 'date_joined_company')
+        )
+
+        all_present = True
+        for user_id in team_user_ids:
+            start = join_dates.get(user_id) or first_day
+            d = max(first_day, start)
+            while d <= last_day:
+                if d.weekday() != 6 and (user_id, d) not in punched_days:  # skip Sundays
+                    all_present = False
+                    break
+                d += datetime.timedelta(days=1)
+            if not all_present:
+                break
+        if not all_present:
+            continue
+
+        project.team_size = len(team_user_ids)
+        perfect_projects.append(project)
+
     months = [(i, datetime.date(2000, i, 1).strftime('%B')) for i in range(1, 13)]
     years = range(today.year - 2, today.year + 1)
     return render(request, 'leaves/appreciation.html', {
