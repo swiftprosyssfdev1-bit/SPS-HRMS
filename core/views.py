@@ -289,9 +289,17 @@ def dashboard(request):
         base_qs = EmployeeProfile.objects.select_related('user')
         if active_branch:
             base_qs = base_qs.filter(user__branch=active_branch)
-        context['hr_count'] = base_qs.filter(user__role='HR').count()
-        context['manager_count'] = base_qs.filter(user__role='MANAGER').count()
+        context['hr_count'] = base_qs.filter(user__role__in=['HR', 'SENIOR_HR']).count()
+        context['manager_count'] = base_qs.filter(user__role__in=['MANAGER', 'PROJECT_MANAGER', 'GENERAL_MANAGER', 'CTO']).count()
         context['employee_count'] = base_qs.filter(user__role='EMPLOYEE').count()
+        
+        context['month_attendance'] = AttendanceRecord.objects.filter(
+            user=user, date__year=today.year, date__month=today.month, in_time__isnull=False
+        ).count()
+        from leaves.models import LeaveRequest
+        context['my_pending_leaves'] = LeaveRequest.objects.filter(
+            user=user, status='PENDING'
+        ).count()
     elif user.role == 'COO':
         import calendar
         from datetime import date

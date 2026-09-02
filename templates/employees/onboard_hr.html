@@ -19,8 +19,23 @@
       </div>
       <div><label>Department</label>{{ form.department|add_error_class }}</div>
       <div><label>Joining Date</label>{{ form.date_joined_company|add_error_class }}{% if form.date_joined_company.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ form.date_joined_company.errors.0 }}</p>{% endif %}</div>
-      <div><label>Temporary Password</label>{{ form.password|add_error_class }}{% if form.password.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ form.password.errors.0 }}</p>{% endif %}</div>
-
+      <div>
+        <label>Temporary Password</label>
+        <div class="password-field-wrap">
+          {{ form.password|add_error_class }}
+          <button type="button" class="password-toggle-btn toggle-pwd" aria-label="Show password">
+            <svg class="eye-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+            <svg class="eye-off-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;">
+              <path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a18.7 18.7 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+              <line x1="1" y1="1" x2="23" y2="23"/>
+            </svg>
+          </button>
+        </div>
+        {% if form.password.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ form.password.errors.0 }}</p>{% endif %}
+      </div>
       <div><label>Role</label>{{ form.role|add_error_class }}</div>
       <div><label>Department</label>{{ form.department|add_error_class }}</div>
     </div>
@@ -178,6 +193,22 @@
 
   syncAccessLabel();
   updateRoleMode();
+
+  var toggleBtns = document.querySelectorAll('.toggle-pwd');
+  toggleBtns.forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var wrap = btn.closest('.password-field-wrap');
+      var input = wrap.querySelector('input');
+      var eyeIcon = btn.querySelector('.eye-icon');
+      var eyeOffIcon = btn.querySelector('.eye-off-icon');
+      
+      var isPassword = input.type === 'password';
+      input.type = isPassword ? 'text' : 'password';
+      eyeIcon.style.display = isPassword ? 'none' : 'block';
+      eyeOffIcon.style.display = isPassword ? 'block' : 'none';
+      btn.setAttribute('aria-label', isPassword ? 'Hide password' : 'Show password');
+    });
+  });
 })();
 </script>
 

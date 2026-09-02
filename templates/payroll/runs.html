@@ -90,7 +90,9 @@
         <th>Department</th>
         <th>Role</th>
         <th>Status</th>
+        {% if request.user.role != 'ADMIN' %}
         <th style="text-align:right;">Actions</th>
+        {% endif %}
       </tr>
     </thead>
     <tbody id="payroll-tbody">
@@ -123,9 +125,11 @@
             {% endif %}
           </div>
         </td>
+        {% if request.user.role != 'ADMIN' %}
         <td class="payroll-actions-cell">
           <a href="{% url 'payroll:employee_payroll_history' item.user.id %}" class="btn btn-outline btn-sm">View Slips</a>
         </td>
+        {% endif %}
       </tr>
       {% empty %}
       <tr><td colspan="6" class="empty-state">No employees found.</td></tr>
