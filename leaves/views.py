@@ -527,9 +527,12 @@ def appreciation_report(request):
         last_day = today
 
     active_branch = getattr(request, 'active_branch', request.user.branch if request.user.role in ('HR', 'SENIOR_HR') else None)
-    # Active projects
+    # Active projects — filter by whichever branch is currently selected,
+    # same as every other HR report (dashboard, leave stats, etc). Full
+    # cross-branch access only matters for *whether you can switch*, not
+    # for bypassing the switcher once a branch is selected.
     projects = Project.objects.filter(status__in=['PENDING', 'APPROVED', 'COMPLETED'])
-    if active_branch and not getattr(request.user, 'can_access_all_branches', False):
+    if active_branch:
         projects = projects.filter(Q(manager__branch=active_branch) | Q(created_by__branch=active_branch)).distinct()
 
     perfect_projects = []
