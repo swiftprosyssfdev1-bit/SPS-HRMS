@@ -64,14 +64,21 @@ def _parse_date(date_str):
         return timezone.localdate()
 
 
-def _last_target(employee_id, project_id, before_date):
+def _last_target(employee_id, project_id, before_date, work_type=None):
     """Most recent target_day this employee had (on this project, or with
     no project for the Unassigned section) from BEFORE the selected date.
     Used as the Team Overview's fallback display when there's no entry yet
     for the selected date, instead of always showing the project's current
-    live target regardless of which date is being viewed."""
+    live target regardless of which date is being viewed.
+
+    work_type restricts the lookup to PRODUCTION or QA rows specifically —
+    an employee can have both for the same project/date, and a QA row's
+    fallback should never pick up a Production target (or vice versa).
+    Pass None to match either (used where the row isn't work-type-scoped)."""
     qs = DailyProduction.objects.filter(employee_id=employee_id, date__lt=before_date)
     qs = qs.filter(project_id=project_id) if project_id else qs.filter(project__isnull=True)
+    if work_type:
+        qs = qs.filter(work_type=work_type)
     last = qs.order_by('-date', '-id').first()
     return last.target_day if last else None
 
@@ -512,13 +519,15 @@ def tracker_dashboard(request):
                 proj_records = [r for r in emp_records if r.project_id == proj.id]
                 row = {'user': emp, 'records': proj_records}
                 if not proj_records:
-                    row['fallback_target'] = _last_target(emp.id, proj.id, selected_date)
+                    wt = 'QA' if is_qa_dept_manager else 'PRODUCTION'
+                    row['fallback_target'] = _last_target(emp.id, proj.id, selected_date, work_type=wt)
                 project_groups.setdefault(proj, []).append(row)
         else:
             no_project_records = [r for r in emp_records if not r.project_id]
             row = {'user': emp, 'records': no_project_records}
             if not no_project_records:
-                row['fallback_target'] = _last_target(emp.id, None, selected_date)
+                wt = 'QA' if is_qa_dept_manager else 'PRODUCTION'
+                row['fallback_target'] = _last_target(emp.id, None, selected_date, work_type=wt)
             unassigned_rows.append(row)
 
     can_set_target = request.user.role in ('GENERAL_MANAGER', 'PROJECT_MANAGER', 'MANAGER') or is_tl_pl
