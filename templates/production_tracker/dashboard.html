@@ -97,8 +97,8 @@
             </a>
           </td>
           <td>-</td>
-          <td>{{ project.daily_target|default:"-" }}</td>
-          <td colspan="4" style="color:#999;">No entry for this date yet</td>
+          <td>{{ row.fallback_target|default:"-" }}</td>
+          <td colspan="4" style="color:#999;">No entry for this date yet{% if row.fallback_target %} (showing last saved target){% endif %}</td>
         </tr>
         {% endif %}
       {% endfor %}
@@ -163,14 +163,14 @@
             <form method="post" action="{% url 'production_tracker:set_target' row.user.id %}" style="display:flex; gap:6px; margin:0;">
               {% csrf_token %}
               <input type="hidden" name="date" value="{{ selected_date|date:'Y-m-d' }}">
-              <input type="number" min="0" name="target_day" placeholder="0" class="form-control" style="width:90px; margin:0;">
+              <input type="number" min="0" name="target_day" value="{{ row.fallback_target|default:'' }}" placeholder="0" class="form-control" style="width:90px; margin:0;">
               <button type="submit" class="btn btn-primary btn-sm">Set</button>
             </form>
             {% else %}
-              -
+              {{ row.fallback_target|default:"-" }}
             {% endif %}
           </td>
-          <td colspan="4" style="color:#999;">No entry for this date yet</td>
+          <td colspan="4" style="color:#999;">No entry for this date yet{% if row.fallback_target %} (showing last saved target){% endif %}</td>
         {% endif %}
       </tr>
       {% endwith %}

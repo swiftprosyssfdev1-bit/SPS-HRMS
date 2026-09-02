@@ -250,7 +250,15 @@ def create_increment(request):
 
                 for emp_user in emp_users:
                     if len(emp_users) == 1:
-                        feedback_manager = manual_feedback_manager if emp_user.role in ('EMPLOYEE', 'PROJECT_MANAGER') else None
+                        if emp_user.role in ('EMPLOYEE', 'PROJECT_MANAGER'):
+                            if manual_feedback_manager:
+                                feedback_manager = manual_feedback_manager
+                            elif emp_user.role == 'PROJECT_MANAGER':
+                                feedback_manager = _current_gm_for(emp_user)
+                            else:
+                                feedback_manager = _current_pm_for(emp_user)
+                        else:
+                            feedback_manager = None
                         current_basic = manual_current_basic
                     else:
                         if emp_user.role == 'PROJECT_MANAGER':
@@ -279,7 +287,7 @@ def create_increment(request):
 
                 if len(emp_users) == 1:
                     if created_for_feedback:
-                        messages.success(request, f"Increment request sent to {manual_feedback_manager} for feedback.")
+                        messages.success(request, f"Increment request sent to {feedback_manager} for feedback.")
                     else:
                         messages.success(request, f"Increment request created for {emp_users[0]}.")
                 else:
@@ -458,7 +466,8 @@ def submit_increment_feedback(request, increment_id):
 
 
 
-# ---------- Step 1: HR requests a report ----------
+# ---------- HR requests a performance report — routed straight into ----------
+# ---------- the PM's "Increment Feedback" queue (status=PENDING).    ----------
 @hr_only_required
 def request_performance_report(request, user_id):
     emp_user = get_object_or_404(User, id=user_id)
@@ -468,8 +477,10 @@ def request_performance_report(request, user_id):
     # increment reports for them go to the CTO, not the department manager.
     if emp_user.is_software_dept():
         manager = User.objects.filter(role='CTO').first()
+    elif emp_user.role == 'PROJECT_MANAGER':
+        manager = _current_gm_for(emp_user)
     else:
-        manager = dept.manager if (dept and dept.manager_id) else emp_user.manager
+        manager = _current_pm_for(emp_user) or (dept.manager if (dept and dept.manager_id) else emp_user.manager)
 
     if not manager:
         messages.error(request, f"{emp_user} has no manager assigned — cannot request a report.")
@@ -485,7 +496,7 @@ def request_performance_report(request, user_id):
         current_basic=current_basic,
         requested_by=request.user,
         feedback_manager=manager,
-        status='PENDING_REPORT',
+        status='PENDING',
         report_requested_at=dj_timezone.now(),
     )
     messages.success(request, f"Performance report requested from {manager} for {emp_user}.")

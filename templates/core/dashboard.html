@@ -36,6 +36,15 @@
   <div class="stat-card"><div class="stat-value">{{ employee_count }}</div><div class="stat-label">Total Employees</div></div>
 </div>
 <div class="card">
+  <h3>Your Attendance Today</h3>
+  {% if today_record and today_record.in_time %}
+    <p>Punched in at <strong>{{ today_record.in_time|time:"h:i A" }}</strong>{% if today_record.out_time %}, punched out at <strong>{{ today_record.out_time|time:"h:i A" }}</strong>{% endif %}.</p>
+  {% else %}
+    <p>You haven't punched in today.</p>
+  {% endif %}
+  <a href="{% url 'attendance:punch' %}" class="btn btn-primary">Open Attendance</a>
+</div>
+<div class="card">
   <h3>Quick Actions</h3>
   <div class="punch-btns" style="justify-content:flex-start; flex-wrap:wrap;">
     <a href="{% url 'employees:directory' %}" class="btn btn-primary">Employee Directory</a>
@@ -128,12 +137,27 @@
 </div>
 
 <div class="card">
+  <h3>Your Attendance Today</h3>
+  {% if today_record and today_record.in_time %}
+    <p>Punched in at <strong>{{ today_record.in_time|time:"h:i A" }}</strong>{% if today_record.out_time %}, punched out at <strong>{{ today_record.out_time|time:"h:i A" }}</strong>{% endif %}.</p>
+  {% else %}
+    <p>You haven't punched in today.</p>
+  {% endif %}
+  <a href="{% url 'attendance:punch' %}" class="btn btn-primary">Open Attendance</a>
+</div>
+<div class="card">
   <h3>Quick Actions</h3>
   <div class="punch-btns" style="justify-content:flex-start; flex-wrap:wrap;">
     <a href="{% url 'employees:directory' %}" class="btn btn-primary">Employee Directory</a>
     <a href="{% url 'projects:list' %}" class="btn btn-outline">Projects</a>
   </div>
 </div>
+
+{% if use_single_leave_category %}
+{% include 'core/_leave_category_single.html' %}
+{% else %}
+{% include 'core/_leave_category_by_branch.html' %}
+{% endif %}
 
 {% elif user.role == 'HR' or user.role == 'SENIOR_HR' %}
 <div class="stat-grid">
@@ -168,6 +192,15 @@
   </div>
 </div>
 <div class="card">
+  <h3>Your Attendance Today</h3>
+  {% if today_record and today_record.in_time %}
+    <p>Punched in at <strong>{{ today_record.in_time|time:"h:i A" }}</strong>{% if today_record.out_time %}, punched out at <strong>{{ today_record.out_time|time:"h:i A" }}</strong>{% endif %}.</p>
+  {% else %}
+    <p>You haven't punched in today.</p>
+  {% endif %}
+  <a href="{% url 'attendance:punch' %}" class="btn btn-primary">Open Attendance</a>
+</div>
+<div class="card">
   <h3>Quick Actions</h3>
   <div class="punch-btns" style="justify-content:flex-start; flex-wrap:wrap;">
     <a href="{% url 'employees:onboard' %}" class="btn btn-primary">Onboard Employee</a>
@@ -177,6 +210,12 @@
     <a href="{% url 'increments:create' %}" class="btn btn-outline">New Increment</a>
   </div>
 </div>
+
+{% if use_single_leave_category %}
+{% include 'core/_leave_category_single.html' %}
+{% else %}
+{% include 'core/_leave_category_by_branch.html' %}
+{% endif %}
 
 {% else %}
 <div class="stat-grid">
@@ -208,84 +247,110 @@
 {% if show_leave_analytics and leave_analytics_json %}
 <div class="card">
   <h3>Team Leave Analytics</h3>
-  {% if team_analytics_count %}
-  <p style="font-size: 0.9em; color: #666; margin-top: -10px; margin-bottom: 15px;">Aggregated leave usage for {{ team_analytics_count }} team member(s).</p>
-  {% endif %}
-  <div style="display:flex; flex-wrap:wrap; gap:20px;">
-    <div style="width:300px; height:300px; position:relative;">
-      <canvas id="leavePieChart"></canvas>
+  <p style="font-size: 0.9em; color: #666; margin-top: -10px; margin-bottom: 15px;">
+    {% if team_analytics_count %}Aggregated leave usage for {{ team_analytics_count }} team member(s) — {{ leave_analytics_month }}.{% endif %}
+  </p>
+
+  <div id="leave-analytics-body" style="display:flex; flex-wrap:wrap; gap:24px; align-items:center;">
+    <div style="width:220px; height:220px; position:relative;">
+      <canvas id="leaveDoughnutChart"></canvas>
+      <div id="leave-doughnut-center" style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); text-align:center; pointer-events:none;">
+        <div id="leave-doughnut-total" style="font-size:1.6em; font-weight:bold;">0</div>
+        <div style="font-size:0.8em; color:#666;">Days Used</div>
+      </div>
     </div>
-    <div id="leave-legend" style="flex:1; min-width:200px; display:flex; flex-direction:column; justify-content:center;"></div>
+    <div id="leave-legend" style="flex:1; min-width:220px;"></div>
   </div>
+
+  <div id="leave-remaining-summary" style="margin-top:18px; padding-top:14px; border-top:1px solid #eee; font-weight:bold;"></div>
+
+  <table class="table" style="width:100%; border-collapse:collapse; margin-top:14px;">
+    <thead>
+      <tr>
+        <th style="text-align:left; border-bottom:1px solid #ddd; padding:6px;">Leave Type</th>
+        <th style="text-align:right; border-bottom:1px solid #ddd; padding:6px;">Used Days</th>
+      </tr>
+    </thead>
+    <tbody id="leave-detail-table-body"></tbody>
+  </table>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
 document.addEventListener("DOMContentLoaded", function() {
     var analyticsData = {{ leave_analytics_json|safe }};
-    if (analyticsData && analyticsData.length > 0) {
-        var labels = [];
-        var usedData = [];
-        var bgColors = ['#4e73df', '#1cc88a', '#36b9cc', '#f6c23e', '#e74a3b', '#858796'];
-        
-        var legendHtml = '<table class="table" style="width:100%; border-collapse:collapse;"><tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:5px;">Category</th><th style="text-align:right; border-bottom:1px solid #ddd; padding:5px;">Team Used</th><th style="text-align:right; border-bottom:1px solid #ddd; padding:5px;">Team Remaining</th></tr>';
-        
-        var totalUsed = 0;
-        analyticsData.forEach(function(item, index) {
-            labels.push(item.category);
-            usedData.push(item.used);
-            totalUsed += item.used;
-            var color = bgColors[index % bgColors.length];
-            legendHtml += '<tr><td style="padding:5px;"><span style="display:inline-block;width:12px;height:12px;background:'+color+';margin-right:8px;border-radius:50%;"></span>'+item.category+'</td><td style="text-align:right; padding:5px; font-weight: bold;">'+item.used+'</td><td style="text-align:right; padding:5px;">'+item.remaining+'</td></tr>';
-        });
-        
-        legendHtml += '</table>';
-        document.getElementById('leave-legend').innerHTML = legendHtml;
+    var totalRemaining = {{ leave_total_remaining|default:0 }};
+    var totalUsed = {{ leave_total_used|default:0 }};
 
-        var ctx = document.getElementById('leavePieChart').getContext('2d');
-        
-        // If all data is 0, chart.js won't render a pie. 
-        // We can render a "No Leaves Taken" pie or just let it be empty but without the top legend.
-        var chartData = usedData;
-        var chartBgColors = bgColors;
-        var tooltipCallback = function(context) {
-            return context.label + ': ' + context.raw + ' days';
-        };
+    // CL -> Blue, EL -> Green, SICK -> Orange — kept consistent everywhere
+    // this component renders (chart, legend, table).
+    var colorMap = {'CL': '#4e73df', 'EL': '#1cc88a', 'SICK': '#f6811f'};
 
-        if (totalUsed === 0) {
-            chartData = [1];
-            chartBgColors = ['#e0e0e0'];
-            labels = ['No Leaves Taken'];
-            tooltipCallback = function() { return 'No leaves taken yet'; };
-        }
+    var totalDetailBody = document.getElementById('leave-detail-table-body');
+    var remainingSummaryEl = document.getElementById('leave-remaining-summary');
+    remainingSummaryEl.innerHTML = 'Total Remaining Leave: ' + totalRemaining + ' days';
 
-        new Chart(ctx, {
-            type: 'pie',
-            data: {
-                labels: labels,
-                datasets: [{
-                    data: chartData,
-                    backgroundColor: chartBgColors,
-                    hoverOffset: 4,
-                }],
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        display: false // Fix for Chart.js v3/v4
-                    },
-                    tooltip: {
-                        callbacks: {
-                            label: tooltipCallback
+    if (totalUsed === 0) {
+        // Zero state: no unlabeled empty circle — explicit message instead,
+        // but the real combined-remaining figure is still shown above.
+        document.getElementById('leave-analytics-body').innerHTML =
+            '<p style="color:#666;">No leave data for this period.</p>';
+        totalDetailBody.innerHTML = '';
+        return;
+    }
+
+    var legendHtml = '';
+    var labels = [];
+    var chartData = [];
+    var chartColors = [];
+
+    analyticsData.forEach(function(item) {
+        if (item.used <= 0) return;
+        labels.push(item.label);
+        chartData.push(item.used);
+        chartColors.push(colorMap[item.type]);
+
+        legendHtml += '<div style="display:flex; align-items:center; gap:8px; padding:4px 0;">' +
+            '<span style="display:inline-block;width:12px;height:12px;background:' + colorMap[item.type] + ';border-radius:50%;flex-shrink:0;"></span>' +
+            '<span>' + item.label + ' (' + item.type + ') Used</span>' +
+            '<span style="margin-left:auto; font-weight:bold;">' + item.used + ' days</span>' +
+            '</div>';
+
+        totalDetailBody.innerHTML += '<tr>' +
+            '<td style="padding:6px;">' + item.label + ' (' + item.type + ')</td>' +
+            '<td style="text-align:right; padding:6px;">' + item.used + '</td>' +
+            '</tr>';
+    });
+
+    document.getElementById('leave-legend').innerHTML = legendHtml;
+    document.getElementById('leave-doughnut-total').textContent = totalUsed;
+
+    var ctx = document.getElementById('leaveDoughnutChart').getContext('2d');
+    new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: labels,
+            datasets: [{
+                data: chartData,
+                backgroundColor: chartColors,
+                hoverOffset: 4,
+            }],
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '65%',
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            return context.label + ': ' + context.raw + ' days used';
                         }
                     }
                 }
-            },
-        });
-    } else {
-        document.getElementById('leavePieChart').parentElement.innerHTML = '<p>No leave balances found for the team.</p>';
-    }
+            }
+        },
+    });
 });
 </script>
 {% endif %}

@@ -257,12 +257,9 @@
     </tr>
     {% empty %}<tr><td colspan="3" class="empty-state">No documents uploaded.</td></tr>{% endfor %}
   </table>
-  <form method="post" action="{% url 'employees:upload_document' emp_user.id %}" enctype="multipart/form-data" style="margin-top:14px; display:flex; gap:10px; align-items:end;">
-    {% csrf_token %}
-    <div style="flex:1;"><label>Official Document Type</label>{{ doc_form.doc_type }}</div>
-    <div style="flex:1;"><label>File</label>{{ doc_form.file }}</div>
-    <button type="submit" class="btn btn-accent" style="margin-bottom:14px;">Upload</button>
-  </form>
+  {% if not is_admin_viewer %}
+  <a href="{% url 'employees:issue_letter' %}?employee={{ emp_user.id }}" class="btn btn-accent" style="margin-top:14px; display:inline-block;">+ Issue a Letter to {{ emp_user.first_name|default:emp_user.username }}</a>
+  {% endif %}
 </div>
 
 

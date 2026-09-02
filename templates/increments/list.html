@@ -102,8 +102,7 @@
           <input type="hidden" name="anniversary_date" value="{{ d.anniversary_date|date:'Y-m-d' }}">
           <button type="submit" class="btn btn-outline btn-sm">Cancel</button>
         </form>
-        <a href="{% url 'increments:request_performance_report' d.user.id %}" class="btn btn-accent btn-sm">Request Performance Report</a>
-        <a href="{% url 'increments:create' %}?user={{ d.user.id }}" class="btn btn-outline btn-sm">Give Increment Directly</a>
+        <a href="{% url 'increments:create' %}?user={{ d.user.id }}" class="btn btn-accent btn-sm">Request Performance Report</a>
       </div>
     </div>
   </div>

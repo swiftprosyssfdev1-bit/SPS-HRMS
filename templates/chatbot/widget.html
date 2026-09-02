@@ -13,7 +13,7 @@
     </div>
     <div id="hr-chatbot-messages">
       <div class="hr-chatbot-msg hr-chatbot-msg-bot">
-        Hi {{ request.user.first_name|default:request.user.username }}! I'm Your Assist. Ask me about your leave balance, attendance, payslip or general HR questions.
+        Hello {{ request.user.first_name|default:request.user.username }}. I am Your Assist, the SPS HRMS AI Assistant. How may I assist you today with your HR, payroll, or system inquiries?
       </div>
     </div>
     <form id="hr-chatbot-form">
@@ -24,4 +24,4 @@
   </div>
 </div>
 
-<script src="{% static 'js/chatbot.js' %}?v=2"></script>
+<script src="{% static 'js/chatbot.js' %}?v=3"></script>
