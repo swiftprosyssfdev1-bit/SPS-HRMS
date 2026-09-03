@@ -13,6 +13,9 @@
     {% if can_edit_identity %}
     <a href="{% url 'employees:edit_employee_profile' emp_user.id %}" class="btn btn-accent btn-sm">Edit Profile</a>
     {% endif %}
+    {% if request.user.role == 'ADMIN' %}
+    <a href="{% url 'employees:reset_employee_credentials' emp_user.id %}" class="btn btn-accent btn-sm">Reset Username/Password</a>
+    {% endif %}
   </div>
 </div>
 
@@ -37,6 +40,21 @@
     </p>
   </div>
 </div>
+
+{% if request.user.role == 'ADMIN' and emp_user.role == 'HR' or request.user.role == 'ADMIN' and emp_user.role == 'SENIOR_HR' or request.user.role == 'ADMIN' and emp_user.role == 'ADMIN' %}
+<div class="card" style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+  <strong style="font-size:0.9rem;">Status:</strong>
+  <form method="post" action="{% url 'employees:update_employee_status' emp_user.id %}" style="display:flex; align-items:center; gap:10px;">
+    {% csrf_token %}
+    <select name="status" class="form-control" style="margin-bottom:0; width:auto;">
+      <option value="ONBOARDING" {% if profile.status == 'ONBOARDING' %}selected{% endif %}>Onboarding</option>
+      <option value="ACTIVE" {% if profile.status == 'ACTIVE' %}selected{% endif %}>Active{% if profile.status == 'EXITED' %} (Rejoin){% endif %}</option>
+      <option value="EXITED" {% if profile.status == 'EXITED' %}selected{% endif %}>Exited</option>
+    </select>
+    <button type="submit" class="btn btn-accent btn-sm">Update Status</button>
+  </form>
+</div>
+{% endif %}
 
 {% if profile.status == 'EXITED' %}
 <div class="card" style="border-left:4px solid #E4483A;">
@@ -147,24 +165,31 @@
     <div><label style="font-weight:700;">Previous Experience</label><p style="margin:0;">{{ profile.previous_experience|default:"-" }}</p></div>
     <div><label style="font-weight:700;">Experience (Current Company)</label><p style="margin:0;">{{ profile.current_company_experience|default:"-" }}</p></div>
     <div><label style="font-weight:700;">Employment Status</label><p style="margin:0;">{{ profile.get_employment_status_display|default:"-" }}</p></div>
+    {% if can_view_confidential %}
     <div><label style="font-weight:700;">Aadhar Number</label><p style="margin:0;">{{ profile.aadhar_display }}</p></div>
     <div><label style="font-weight:700;">PAN Number</label><p style="margin:0;">{{ profile.pan_no|default:"-" }}</p></div>
+    {% endif %}
     <div><label style="font-weight:700;">Mobile</label><p style="margin:0;">{% if emp_user.phone %}{{ emp_user.phone_country_code }} {{ emp_user.phone }}{% else %}-{% endif %}</p></div>
     <div><label style="font-weight:700;">Emergency Contact</label><p style="margin:0;">{{ profile.emergency_contact_name|default:"-" }}{% if profile.emergency_contact_phone %} &middot; {{ profile.emergency_contact_country_code }} {{ profile.emergency_contact_phone }}{% endif %}</p></div>
+    {% if can_view_confidential %}
     <div><label style="font-weight:700;">UAN / PF Number</label><p style="margin:0;">{{ profile.uan_pf_number|default:"-" }}</p></div>
     <div><label style="font-weight:700;">ESI Number</label><p style="margin:0;">{{ profile.esi_number|default:"-" }}</p></div>
+    {% endif %}
     <div><label style="font-weight:700;">Address</label><p style="margin:0;">{{ profile.address|default:"-" }}</p></div>
     <div><label style="font-weight:700;">Email</label><p style="margin:0;">{{ emp_user.email|default:"-" }}</p></div>
     <div><label style="font-weight:700;">Blood Group</label><p style="margin:0;">{{ profile.blood_group|default:"-" }}</p></div>
+    {% if can_view_confidential %}
     <div><label style="font-weight:700;">Referred By</label><p style="margin:0;">{{ profile.referred_by_name|default:"-" }}</p></div>
     <div><label style="font-weight:700;">Referred By (Enrollment No.)</label><p style="margin:0;">{{ profile.referred_by_enrollment_id|default:"-" }}</p></div>
     <div><label style="font-weight:700;">Reference 1 ({{ profile.get_reference1_type_display|default:"College Faculty / Previous Company" }})</label><p style="margin:0;">{{ profile.reference1_name|default:"-" }}{% if profile.reference1_contact %} &middot; {{ profile.reference1_contact }}{% endif %}</p></div>
     <div><label style="font-weight:700;">Reference 2 (Relative)</label><p style="margin:0;">{{ profile.reference2_name|default:"-" }}{% if profile.reference2_relation %} ({{ profile.reference2_relation }}){% endif %}{% if profile.reference2_contact %} &middot; {{ profile.reference2_contact }}{% endif %}</p></div>
+    {% endif %}
     <div><label style="font-weight:700;">Department</label><p style="margin:0;">{{ emp_user.department|default:"-" }}</p></div>
     <div><label style="font-weight:700;">Branch</label><p style="margin:0;">{{ emp_user.branch|default:"-" }}</p></div>
   </div>
 </div>
 
+{% if can_view_confidential %}
 <div class="card">
   <h3>Bank Details</h3>
   <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px 24px;">
@@ -175,7 +200,9 @@
     <div><label style="font-weight:700;">Branch Name</label><p style="margin:0;">{{ bank_detail.branch_name|default:"-" }}</p></div>
   </div>
 </div>
+{% endif %}
 
+{% if can_view_salary %}
 <div class="card">
   <h3>Salary Details</h3>
   {% if salary_structure %}
@@ -195,6 +222,7 @@
     <a href="{% url 'increments:history_detail' emp_user.id %}">View increment history</a>
   </p>
 </div>
+{% endif %}
 
 {% if latest_resignation %}
 <div class="card">
@@ -254,6 +282,7 @@
 </div>
 {% endif %}
 
+{% if can_view_confidential %}
 <div class="card">
   <h3>Documents</h3>
   <table>
@@ -264,4 +293,5 @@
   </table>
   <p style="color:var(--grey-500); font-size:0.8rem; margin:10px 0 0;">Read-only. Use Edit Profile to upload official documents.</p>
 </div>
+{% endif %}
 {% endblock %}

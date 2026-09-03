@@ -138,83 +138,26 @@ class ProjectSelect(forms.Select):
         return option
 
 
-class NewEmployeeForm(forms.ModelForm):
-    """Used by HR to onboard a new employee (creates the User).
-    Employee ID / Enrollment ID are auto-generated from the branch at save
-    time (see views.onboard_employee) — not collected here."""
-    password = forms.CharField(widget=forms.PasswordInput, help_text="Temporary password for the employee")
-    first_name = forms.CharField(max_length=150, validators=[name_validator], widget=forms.TextInput(attrs=NAME_ATTRS))
-    last_name = forms.CharField(max_length=150, required=False, validators=[name_validator], widget=forms.TextInput(attrs=NAME_ATTRS))
-    phone_country_code = forms.ChoiceField(choices=COUNTRY_CODES, required=False, widget=forms.Select(attrs=COUNTRY_CODE_ATTRS))
-    phone = forms.CharField(max_length=10, required=False, validators=[phone_validator], widget=forms.TextInput(attrs=PHONE_ATTRS))
-    department = forms.ModelChoiceField(
-        queryset=Department.objects.all().order_by('name'),
-        required=False,
-        widget=forms.Select(attrs={'class': 'form-control'}),
-    )
-    branch = forms.ModelChoiceField(queryset=Branch.objects.all().order_by('code'), required=False)
-    project = forms.ModelChoiceField(
-        queryset=Project.objects.all().order_by('name'),
-        required=False,
-        widget=ProjectSelect(attrs={'class': 'form-control'}),
-    )
-
-    class Meta:
-        model = User
-        fields = ['username', 'first_name', 'last_name', 'email',
-                  'role', 'department', 'branch', 'date_joined_company', 'phone_country_code', 'phone', 'password']
-        widgets = {'date_joined_company': forms.DateInput(attrs={'type': 'date'})}
-
-    def __init__(self, *args, **kwargs):
-        acting_user = kwargs.pop('acting_user', None)
-        super().__init__(*args, **kwargs)
-
-        if acting_user and acting_user.role != User.ROLE_ADMIN:
-            # HR cannot add Admin or GM (HR)
-            self.fields['role'].choices = [
-                choice for choice in User.ROLE_CHOICES 
-                if choice[0] not in (User.ROLE_ADMIN, User.ROLE_SENIOR_HR)
-            ]
-
-        if acting_user and not user_can_switch_branch(acting_user):
-            # This HR user is restricted to their own branch — only show
-            # that branch. Departments are common, so no need to filter them.
-            allowed_branches = Branch.objects.filter(id=acting_user.branch_id) if acting_user.branch_id else Branch.objects.none()
-            self.fields['branch'].queryset = allowed_branches
-            self.fields['department'].queryset = Department.objects.all().order_by('name')
-        else:
-            self.fields['department'].queryset = Department.objects.all().order_by('name')
-        
-        # Project filtering by branch logic is mostly in JS, but we can set the base queryset here.
-        self.fields['project'].queryset = Project.objects.all().order_by('name')
-
-        for field in self.fields.values():
-            field.widget.attrs.setdefault('class', 'form-control')
-
-    def clean(self):
-        cleaned = super().clean()
-        role = cleaned.get('role')
-        # All branch-scoped roles need a branch — HR/COO dashboards bucket
-        # leave analytics and other reporting by user.branch, so a NULL
-        # branch here silently drops this person out of every branch
-        # pie chart even though the account itself is created fine.
-        if role in (User.ROLE_EMPLOYEE, User.ROLE_MANAGER, User.ROLE_PROJECT_MANAGER,
-                    User.ROLE_GENERAL_MANAGER, User.ROLE_CTO):
-            if not cleaned.get('branch'):
-                self.add_error('branch', "Select a branch for this employee.")
-        return cleaned
-
-    def save(self, commit=True):
-        user = super().save(commit=False)
-        user.set_password(self.cleaned_data['password'])
-        department = self.cleaned_data.get('department')
-        if department and department.manager_id and user.role != User.ROLE_MANAGER:
-            user.manager = department.manager
-        else:
-            user.manager = None
-        if commit:
-            user.save()
-        return user
+class DepartmentSelect(forms.Select):
+    """Tags each <option> with data-has-project="1"/"0" depending on
+    whether that Department already has a default_project set. A
+    department WITH one (e.g. a single-project team) auto-assigns new
+    employees to it via core.signals.auto_assign_to_department_project,
+    so no manual pick is needed. A department WITHOUT one (e.g.
+    Production, which spans several projects at once) has no way to
+    know which project to auto-assign, so the JS shows the manual
+    Project field for those. This checks the actual default_project
+    value rather than guessing from the department's name, for the
+    same reason Department.is_qa exists instead of name-matching."""
+    def create_option(self, name, value, label, selected, index, subindex=None, attrs=None):
+        option = super().create_option(name, value, label, selected, index, subindex, attrs)
+        if value:
+            dept = Department.objects.filter(
+                pk=value.value if hasattr(value, 'value') else value
+            ).only('default_project_id').first()
+            if dept:
+                option['attrs']['data-has-project'] = '1' if dept.default_project_id else '0'
+        return option
 
 
 class HREmployeeEditForm(forms.ModelForm):
@@ -471,7 +414,7 @@ class OnboardHRForm(forms.ModelForm):
 
     department = forms.ModelChoiceField(
         queryset=Department.objects.none(), required=False,
-        widget=forms.Select(attrs={'class': 'form-control'})
+        widget=DepartmentSelect(attrs={'class': 'form-control'})
     )
     branch = forms.ModelChoiceField(queryset=Branch.objects.none(), required=False)
     project = forms.ModelChoiceField(
@@ -501,10 +444,15 @@ class OnboardHRForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
 
         if acting_user and acting_user.role in ('HR', 'SENIOR_HR'):
-            # An HR user onboarding another HR can only create HR
-            # accounts — Admin/COO/Manager/Employee creation stays out of
-            # this path for an HR actor.
-            self.fields['role'].choices = [(User.ROLE_HR, 'HR')]
+            # An HR actor can onboard any role except Admin or Senior HR
+            # (GM (HR)) — Admin account creation stays restricted to
+            # Admin actors only, and Senior HR is a peer/superior rank
+            # that HR/Senior HR actors shouldn't be able to create for
+            # each other; only an Admin can create a new GM (HR).
+            self.fields['role'].choices = [
+                c for c in User.ROLE_CHOICES
+                if c[0] not in (User.ROLE_ADMIN, User.ROLE_SENIOR_HR)
+            ]
 
             allowed_branches = acting_user.accessible_branches.all()
             if not allowed_branches.exists() and acting_user.branch_id:
@@ -542,7 +490,7 @@ class OnboardHRForm(forms.ModelForm):
             # of every branch pie chart even though the user exists.
             if not cleaned.get('branch'):
                 self.add_error('branch', "Select a branch for this employee.")
-        elif role in (User.ROLE_HR, User.ROLE_SENIOR_HR, User.ROLE_ADMIN):
+        elif role in (User.ROLE_HR, User.ROLE_SENIOR_HR, User.ROLE_ADMIN, User.ROLE_COO):
             if not cleaned.get('accessible_branches'):
                 self.add_error('accessible_branches', "Select at least one branch this user can access.")
         return cleaned

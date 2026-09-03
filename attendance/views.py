@@ -6,7 +6,7 @@ from django.contrib import messages
 from django.http import HttpResponse
 from django.utils import timezone
 
-from core.decorators import hr_or_admin_required,hr_only_required
+from core.decorators import hr_or_admin_required, hr_only_required, hr_admin_or_manager_required
 from core.models import User
 from attendance.models import AttendanceRecord, MonthlyAttendanceSheet 
 from attendance.utils import (
@@ -74,9 +74,15 @@ def attendance_reports(request):
     return render(request, 'attendance/reports.html', {'records': records, 'late_count': late_count})
 
 
-@hr_or_admin_required
+@hr_admin_or_manager_required
 def employee_attendance(request, user_id):
     emp_user = get_object_or_404(User, id=user_id)
+
+    if request.user.is_manager() and request.user.role not in ('HR', 'SENIOR_HR', 'ADMIN'):
+        if emp_user.department_id != request.user.department_id:
+            messages.error(request, "You can only view attendance for your own department's staff.")
+            return redirect('employees:my_department')
+
     records = AttendanceRecord.objects.filter(user=emp_user)
     return render(request, 'attendance/employee_attendance.html', {'emp_user': emp_user, 'records': records})
 

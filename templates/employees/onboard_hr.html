@@ -37,11 +37,19 @@
         {% if form.password.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ form.password.errors.0 }}</p>{% endif %}
       </div>
       <div><label>Role</label>{{ form.role|add_error_class }}</div>
-      <div><label>Department</label>{{ form.department|add_error_class }}</div>
     </div>
 
+    <div id="single-branch-wrap" style="margin-top:14px;">
+      <label>Branch</label>{{ form.branch|add_error_class }}{% if form.branch.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ form.branch.errors.0 }}</p>{% endif %}
+    </div>
 
-    
+    {% if show_project_field %}
+    <div id="project-wrap" style="margin-top:14px; display:none;">
+      <label>Project</label>{{ form.project|add_error_class }}{% if form.project.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ form.project.errors.0 }}</p>{% endif %}
+    </div>
+    {% endif %}
+
+    <div id="multi-branch-wrap" style="margin-top:14px;">
         <label>Branch Access</label>
         <div class="branch-dropdown" id="access-dropdown">
           <button type="button" class="form-control branch-dropdown-toggle{% if form.accessible_branches.errors %} is-invalid{% endif %}" id="access-dropdown-toggle">
@@ -58,9 +66,8 @@
             {% endfor %}
           </div>
         </div>
-       
-      
-    
+        {% if form.accessible_branches.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:4px 0 0;">{{ form.accessible_branches.errors.0 }}</p>{% endif %}
+    </div>
 
     <button type="submit" class="btn btn-primary" style="margin-top:16px;">Onboard</button>
   </form>
@@ -120,6 +127,22 @@
   var singleBranchSelect = document.querySelector('#onboard-form select[name="branch"]');
   var deptSelect = document.querySelector('#onboard-form select[name="department"]');
   var deptAllOptions = deptSelect ? Array.prototype.slice.call(deptSelect.options) : [];
+  var projectWrap = document.getElementById('project-wrap');
+  var projectSelect = document.querySelector('#onboard-form select[name="project"]');
+
+  function updateProjectVisibility() {
+    if (!deptSelect || !projectWrap) return;
+    var selectedOpt = deptSelect.options[deptSelect.selectedIndex];
+    var singleRoles = ['EMPLOYEE', 'MANAGER', 'PROJECT_MANAGER', 'GENERAL_MANAGER', 'CTO'];
+    var deptDrivenRole = singleRoles.indexOf(roleSelect.value) !== -1;
+    // Show the manual Project field only when a department is picked
+    // and it has no default_project of its own to auto-assign from
+    // (e.g. Production, which spans several projects at once).
+    var needsProject = deptDrivenRole && selectedOpt && selectedOpt.value &&
+      selectedOpt.getAttribute('data-has-project') === '0';
+    projectWrap.style.display = needsProject ? '' : 'none';
+    if (!needsProject && projectSelect) projectSelect.value = '';
+  }
 
   function syncAccessLabel() {
     var checked = Array.prototype.filter.call(boxes, function (b) { return b.checked; });
@@ -146,11 +169,13 @@
     });
     var stillValid = Array.prototype.some.call(deptSelect.options, function (o) { return o.value === currentValue; });
     deptSelect.value = stillValid ? currentValue : '';
+    updateProjectVisibility();
   }
 
   function updateDeptFilterForCurrentMode() {
     var role = roleSelect.value;
-    if (role === 'EMPLOYEE') {
+    var singleRoles = ['EMPLOYEE', 'MANAGER', 'PROJECT_MANAGER', 'GENERAL_MANAGER', 'CTO'];
+    if (singleRoles.indexOf(role) !== -1) {
       var branchId = singleBranchSelect.value;
       filterDepartmentOptions(branchId ? [branchId] : []);
     } else {
@@ -161,7 +186,7 @@
 
   function updateRoleMode() {
   var role = roleSelect.value;
-  var needsSingle = (role === 'EMPLOYEE' || role === 'MANAGER');
+  var needsSingle = (role === 'EMPLOYEE' || role === 'MANAGER' || role === 'PROJECT_MANAGER' || role === 'GENERAL_MANAGER' || role === 'CTO');
   singleWrap.style.display = needsSingle ? '' : 'none';
   multiWrap.style.display = needsSingle ? 'none' : '';
   updateDeptFilterForCurrentMode();
@@ -169,6 +194,7 @@
 
   roleSelect.addEventListener('change', updateRoleMode);
   if (singleBranchSelect) singleBranchSelect.addEventListener('change', updateDeptFilterForCurrentMode);
+  if (deptSelect) deptSelect.addEventListener('change', updateProjectVisibility);
 
   accessToggle.addEventListener('click', function (e) {
     e.stopPropagation();

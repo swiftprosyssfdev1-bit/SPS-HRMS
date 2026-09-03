@@ -15,7 +15,7 @@ from core.models import User
 from .forms import DailyProductionForm
 from .models import (
     HOUR_SLOTS, STANDARD_SHIFT_HOURS, DailyProduction, HourlyEntry, ProductionEvent,
-    apply_project_daily_target,
+    ProductionProcess, apply_project_daily_target,
 )
 
 
@@ -271,6 +271,7 @@ def daily_entry(request):
         'hourly_rows': hourly_rows,
         'today': today,
         'event_options': ProductionEvent.objects.filter(is_active=True).order_by('name'),
+        'process_options': ProductionProcess.objects.filter(is_active=True).order_by('name'),
         'day_records': day_records,
         'is_new_unsaved': is_new_unsaved,
         'project_targets': project_targets,

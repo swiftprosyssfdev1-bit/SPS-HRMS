@@ -30,10 +30,40 @@ class CreatableEventField(forms.CharField):
         return value or ''
 
 
+class CreatableProcessField(forms.CharField):
+    """A text field that looks up a ProductionProcess by name, creating it if
+    it doesn't exist yet. Lets employees type any process name freely while
+    still linking to a proper master-data record. Mirrors CreatableEventField."""
+
+    def to_python(self, value):
+        value = super().to_python(value).strip()
+        if not value:
+            return None
+        obj, _ = ProductionProcess.objects.get_or_create(
+            name__iexact=value,
+            defaults={'name': value, 'is_active': True},
+        )
+        return obj
+
+    def prepare_value(self, value):
+        if isinstance(value, int):
+            try:
+                return ProductionProcess.objects.get(pk=value).name
+            except ProductionProcess.DoesNotExist:
+                return ''
+        if hasattr(value, 'name'):
+            return value.name
+        return value or ''
+
+
 class DailyProductionForm(forms.ModelForm):
     event = CreatableEventField(
         required=False,
         widget=forms.TextInput(attrs={'autocomplete': 'off', 'list': 'event-datalist'}),
+    )
+    process = CreatableProcessField(
+        required=False,
+        widget=forms.TextInput(attrs={'autocomplete': 'off', 'list': 'process-datalist'}),
     )
 
     class Meta:
@@ -52,11 +82,9 @@ class DailyProductionForm(forms.ModelForm):
         user = kwargs.pop('user', None)
         super().__init__(*args, **kwargs)
         self.fields['shift'].widget = forms.Select(choices=[('', '---------')] + list(EmployeeProfile.SHIFT_CHOICES))
-        self.fields['process'].queryset = ProductionProcess.objects.filter(is_active=True)
         self.fields['grouping'].queryset = ProductionGrouping.objects.filter(is_active=True)
         # Both Production and QA rows must be tied to a project.
         self.fields['project'].required = True
-        self.fields['process'].required = False
         self.fields['grouping'].required = False
 
         if user:
