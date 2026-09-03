@@ -89,10 +89,26 @@ def _recent_months(today, count=6):
 @login_required
 def my_payslips(request):
     if request.user.role in ('ADMIN', 'HR', 'SENIOR_HR'):
-        payslips = Payslip.objects.filter(user=request.user).select_related('payroll_run')
+        payslips_qs = Payslip.objects.filter(user=request.user).select_related('payroll_run')
     else:
-        payslips = Payslip.objects.filter(user=request.user, is_released=True).select_related('payroll_run')
-    return render(request, 'payroll/my_payslips.html', {'payslips': payslips})
+        payslips_qs = Payslip.objects.filter(user=request.user, is_released=True).select_related('payroll_run')
+
+    years = sorted({
+        d.year for d in payslips_qs.values_list('payroll_run__start_date', flat=True)
+    }, reverse=True)
+
+    selected_year = request.GET.get('year')
+    if selected_year and selected_year.isdigit() and int(selected_year) in years:
+        selected_year = int(selected_year)
+        payslips_qs = payslips_qs.filter(payroll_run__start_date__year=selected_year)
+    else:
+        selected_year = None
+
+    payslips = payslips_qs.order_by('-payroll_run__start_date')
+
+    return render(request, 'payroll/my_payslips.html', {
+        'payslips': payslips, 'years': years, 'selected_year': selected_year,
+    })
 
 
 @login_required
@@ -100,12 +116,18 @@ def download_payslip(request, payslip_id):
     payslip = get_object_or_404(Payslip.objects.select_related('user'), id=payslip_id)
     is_owner = payslip.user == request.user
     is_hr_or_admin = request.user.is_hr_or_admin()
+    # HR, Senior HR and COO may view/download ANY employee's payslip
+    # (subject to branch scoping below). Admin is deliberately excluded
+    # here — Admin is view-only elsewhere in payroll, and salary/payslip
+    # data must stay private to HR leadership and the employee themselves,
+    # even though Admin can still see the Payroll Runs status table.
+    can_view_others = request.user.role in ('HR', 'SENIOR_HR', 'COO')
 
-    if not (is_owner or is_hr_or_admin):
+    if not (is_owner or can_view_others):
         messages.error(request, "You cannot access this payslip.")
         return redirect('core:dashboard')
 
-    if is_hr_or_admin and not is_owner and not _can_manage_payroll_for(request, payslip.user):
+    if can_view_others and not is_owner and not _can_manage_payroll_for(request, payslip.user):
         messages.error(request, "This payslip belongs to a branch you don't have access to.")
         return redirect('payroll:runs')
 
@@ -177,6 +199,13 @@ def payroll_runs(request):
 @hr_or_admin_required
 def employee_payroll_history(request, user_id):
     emp_user = get_object_or_404(User, id=user_id)
+    # Admin can see the Payroll Runs status table, but must not be able to
+    # open an individual employee's payslip history / PDFs — that stays
+    # restricted to HR, Senior HR and COO. (Admin viewing their own row is
+    # still fine.)
+    if request.user.role == 'ADMIN' and emp_user.id != request.user.id:
+        messages.error(request, "Admin does not have access to view individual payslips.")
+        return redirect('payroll:runs')
     if not _can_manage_payroll_for(request, emp_user):
         return _deny_cross_branch(request, emp_user)
     payslips = Payslip.objects.filter(user=emp_user).select_related('payroll_run').order_by('-payroll_run__start_date')

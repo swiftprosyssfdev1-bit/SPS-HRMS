@@ -1,6 +1,24 @@
 {% extends 'core/base.html' %}
 {% block content %}
 <div class="page-header"><h1>My Payslips</h1></div>
+
+{% if years %}
+<div class="card" style="margin-bottom:16px;">
+  <form method="get" style="display:flex; gap:10px; align-items:flex-end;">
+    <div>
+      <label>Year</label>
+      <select name="year" class="form-control" onchange="this.form.submit()">
+        <option value="">All Years</option>
+        {% for y in years %}
+        <option value="{{ y }}" {% if y == selected_year %}selected{% endif %}>{{ y }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <noscript><button type="submit" class="btn btn-primary btn-sm">Go</button></noscript>
+  </form>
+</div>
+{% endif %}
+
 <div class="card">
   <table>
     <tr><th>Pay Period</th><th>Days Present</th><th>Hours</th><th>Basic</th><th>HRA</th><th>Allowances</th><th>Bonus</th><th>PF Deducted</th><th>Net Pay</th><th></th></tr>

@@ -169,6 +169,13 @@ class NewEmployeeForm(forms.ModelForm):
         acting_user = kwargs.pop('acting_user', None)
         super().__init__(*args, **kwargs)
 
+        if acting_user and acting_user.role != User.ROLE_ADMIN:
+            # HR cannot add Admin or GM (HR)
+            self.fields['role'].choices = [
+                choice for choice in User.ROLE_CHOICES 
+                if choice[0] not in (User.ROLE_ADMIN, User.ROLE_SENIOR_HR)
+            ]
+
         if acting_user and not user_can_switch_branch(acting_user):
             # This HR user is restricted to their own branch — only show
             # that branch. Departments are common, so no need to filter them.
@@ -211,6 +218,8 @@ class NewEmployeeForm(forms.ModelForm):
 
 
 class HREmployeeEditForm(forms.ModelForm):
+    username = forms.CharField(max_length=150, required=False, widget=forms.TextInput(attrs={'class': 'form-control'}))
+    new_password = forms.CharField(required=False, widget=forms.PasswordInput(attrs={'class': 'form-control', 'placeholder': 'Leave blank to keep unchanged'}), help_text="Enter a new password to change it, or leave blank.")
     first_name = forms.CharField(max_length=150, required=False, validators=[name_validator], widget=forms.TextInput(attrs=NAME_ATTRS))
     last_name = forms.CharField(max_length=150, required=False, validators=[name_validator], widget=forms.TextInput(attrs=NAME_ATTRS))
     email = forms.EmailField(required=False, widget=forms.EmailInput(attrs={'class': 'form-control'}))
@@ -245,11 +254,19 @@ class HREmployeeEditForm(forms.ModelForm):
 
     class Meta:
         model = User
-        fields = ['first_name', 'last_name', 'email', 'department', 'manager', 'branch', 'date_joined_company', 'phone_country_code', 'phone']
+        fields = ['username', 'first_name', 'last_name', 'email', 'department', 'manager', 'branch', 'date_joined_company', 'phone_country_code', 'phone']
         widgets = {'date_joined_company': forms.DateInput(attrs={'type': 'date'})}
 
     def __init__(self, *args, **kwargs):
+        acting_user = kwargs.pop('acting_user', None)
         super().__init__(*args, **kwargs)
+        
+        if acting_user and acting_user.role != 'ADMIN':
+            if 'username' in self.fields:
+                del self.fields['username']
+            if 'new_password' in self.fields:
+                del self.fields['new_password']
+                
         for name, field in self.fields.items():
             if name != 'accessible_branches':
                 field.widget.attrs.setdefault('class', 'form-control')
@@ -415,13 +432,8 @@ class RoleChangeForm(forms.ModelForm):
 
         if acting_user and acting_user.role in ('HR', 'SENIOR_HR'):
             self.fields['role'].choices = [
-                (User.ROLE_EMPLOYEE, 'Employee'),
-                (User.ROLE_MANAGER, 'Manager'),
-                (User.ROLE_PROJECT_MANAGER, 'Project Manager'),
-                (User.ROLE_GENERAL_MANAGER, 'General Manager'),
-                (User.ROLE_COO, 'COO'),
-                (User.ROLE_HR, 'HR'),
-                
+                choice for choice in User.ROLE_CHOICES 
+                if choice[0] not in (User.ROLE_ADMIN, User.ROLE_SENIOR_HR)
             ]
 
     def save(self, commit=True):
@@ -453,14 +465,7 @@ class OnboardHRForm(forms.ModelForm):
     phone = forms.CharField(max_length=10, required=False, validators=[phone_validator], widget=forms.TextInput(attrs=PHONE_ATTRS))
 
     role = forms.ChoiceField(
-        choices=[
-            (User.ROLE_EMPLOYEE, 'Employee'),
-            (User.ROLE_MANAGER, 'manager'),
-            (User.ROLE_HR, 'HR'),
-            (User.ROLE_ADMIN, 'Admin'),
-            (User.ROLE_COO, 'COO'),
-            (User.ROLE_SENIOR_HR, 'Senior HR'),
-        ],
+        choices=User.ROLE_CHOICES,
         required=True,
     )
 

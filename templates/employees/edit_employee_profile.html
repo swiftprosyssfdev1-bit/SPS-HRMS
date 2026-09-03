@@ -57,6 +57,27 @@
     <ul class="messages"><li class="error">Please fix the highlighted fields below.</li></ul>
     {% endif %}
     <div style="display:grid; grid-template-columns:1fr 1fr; gap:0 20px;">
+      {% if request.user.role == 'ADMIN' %}
+        <div><label>Username</label>{{ form.username }}{% if form.username.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ form.username.errors.0 }}</p>{% endif %}</div>
+        <div>
+          <label>New Password</label>
+          <div class="password-field-wrap">
+            {{ form.new_password }}
+            <button type="button" class="password-toggle-btn toggle-pwd" aria-label="Show password">
+              <svg class="eye-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+              <svg class="eye-off-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;">
+                <path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a18.7 18.7 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+                <line x1="1" y1="1" x2="23" y2="23"/>
+              </svg>
+            </button>
+          </div>
+          {% if form.new_password.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ form.new_password.errors.0 }}</p>{% endif %}
+          <p style="color:var(--grey-500); font-size:0.8rem; margin-top:2px;">{{ form.new_password.help_text }}</p>
+        </div>
+      {% endif %}
       <div><label>First Name</label>{{ form.first_name }}{% if form.first_name.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ form.first_name.errors.0 }}</p>{% endif %}</div>
       <div><label>Last Name</label>{{ form.last_name }}{% if form.last_name.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ form.last_name.errors.0 }}</p>{% endif %}</div>
       <div><label>Email</label>{{ form.email }}{% if form.email.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ form.email.errors.0 }}</p>{% endif %}</div>
@@ -183,6 +204,27 @@
     Moving Exited &rarr; Active preserves their previous joining date automatically. Update "Date of Joining" above for the new stint afterwards.
   </p>
 </div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', function() {
+    var toggleBtns = document.querySelectorAll('.toggle-pwd');
+    toggleBtns.forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var wrap = btn.closest('.password-field-wrap');
+        var input = wrap.querySelector('input');
+        var eyeIcon = btn.querySelector('.eye-icon');
+        var eyeOffIcon = btn.querySelector('.eye-off-icon');
+        
+        var isPassword = input.type === 'password';
+        input.type = isPassword ? 'text' : 'password';
+        eyeIcon.style.display = isPassword ? 'none' : 'block';
+        eyeOffIcon.style.display = isPassword ? 'block' : 'none';
+        btn.setAttribute('aria-label', isPassword ? 'Hide password' : 'Show password');
+      });
+    });
+  });
+</script>
+
 {% endif %}
 
 {% if can_change_role %}

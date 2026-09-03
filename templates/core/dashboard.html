@@ -31,8 +31,10 @@
 
 {% if user.role == 'ADMIN' %}
 <div class="stat-grid">
-  <div class="stat-card"><div class="stat-value">{{ hr_count }}</div><div class="stat-label">Total HR</div></div>
-  <div class="stat-card"><div class="stat-value">{{ manager_count }}</div><div class="stat-label">Total Managers</div></div>
+  <div class="stat-card"><div class="stat-value">{{ month_attendance }}</div><div class="stat-label">Days Present This Month</div></div>
+  <div class="stat-card orange"><div class="stat-value">{{ my_pending_leaves }}</div><div class="stat-label">My Pending Leave Requests</div></div>
+  <div class="stat-card"><div class="stat-value">{{ hr_count }}</div><div class="stat-label">Total HR &amp; GM(HR)</div></div>
+  <div class="stat-card"><div class="stat-value">{{ manager_count }}</div><div class="stat-label">Total Managers (GM / PM / CTO)</div></div>
   <div class="stat-card"><div class="stat-value">{{ employee_count }}</div><div class="stat-label">Total Employees</div></div>
 </div>
 <div class="card">
@@ -48,6 +50,8 @@
   <h3>Quick Actions</h3>
   <div class="punch-btns" style="justify-content:flex-start; flex-wrap:wrap;">
     <a href="{% url 'employees:directory' %}" class="btn btn-primary">Employee Directory</a>
+    <a href="{% url 'leaves:approvals' %}" class="btn btn-outline">Review Leave Requests</a>
+    <a href="{% url 'payroll:runs' %}" class="btn btn-outline">Payroll Runs</a>
     <a href="{% url 'projects:list' %}" class="btn btn-outline">Projects</a>
   </div>
 </div>

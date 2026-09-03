@@ -842,7 +842,7 @@ def edit_employee_profile(request, user_id):
     enrollment_prefix = enrollment_prefix_for_branch(emp_user.branch)
 
     if request.method == 'POST':
-        form = HREmployeeEditForm(request.POST, instance=emp_user)
+        form = HREmployeeEditForm(request.POST, instance=emp_user, acting_user=request.user)
         identity_form = EmployeeIdentityForm(request.POST, request.FILES, instance=profile)
         bank_form = BankDetailForm(request.POST, instance=bank_detail)
 
@@ -851,11 +851,14 @@ def edit_employee_profile(request, user_id):
 
         saved_anything = False
 
-        # Each form is validated and saved on its own â€” one section having
+        # Each form is validated and saved on its own — one section having
         # no changes (or being left blank) never blocks another section
         # from saving.
         if form.is_valid():
             user_obj = form.save(commit=False)
+            if 'new_password' in form.cleaned_data and form.cleaned_data['new_password']:
+                user_obj.set_password(form.cleaned_data['new_password'])
+                
             if emp_user.role in ('HR', 'SENIOR_HR'):
                 user_obj.branch = emp_user.branch  # HR branch is admin-set, not editable here
 
@@ -908,7 +911,7 @@ def edit_employee_profile(request, user_id):
 
         return redirect('employees:edit_employee_profile', user_id=emp_user.id)
     else:
-        form = HREmployeeEditForm(instance=emp_user)
+        form = HREmployeeEditForm(instance=emp_user, acting_user=request.user)
         identity_form = EmployeeIdentityForm(instance=profile)
         bank_form = BankDetailForm(instance=bank_detail)
 
