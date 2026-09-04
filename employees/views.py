@@ -7,7 +7,7 @@ from django.db.models import Q
 from django.utils import timezone
 from django.urls import reverse
 
-from core.decorators import admin_only_required, hr_or_admin_required, hr_only_required, hr_admin_or_manager_required, hr_admin_action_required, role_required
+from core.decorators import admin_only_required, hr_or_admin_required, hr_only_required, hr_admin_or_manager_required, role_required
 from core.models import User, Branch
 from core.utils import user_can_switch_branch
 
@@ -650,9 +650,23 @@ def employee_detail(request, user_id):
         messages.error(request, "You do not have permission to view this account.")
         return redirect('employees:directory')
 
-    if request.user.is_manager() and request.user.role not in ('HR', 'SENIOR_HR', 'ADMIN'):
-        if emp_user.department_id != request.user.department_id:
-            messages.error(request, "You can only view profiles of your own department's staff.")
+    if request.user.is_manager():
+        # Directory scoping already uses richer, role-specific logic
+        # (a GM's scope includes every project they GM even outside
+        # their own department; a PM's scope includes their project
+        # team). This check used to be a flat department_id comparison,
+        # which meant a GM could SEE someone in the directory (via
+        # get_gm_scope) but then get blocked here from opening their
+        # profile, since that check ignored project membership
+        # entirely. Now it reuses the same scope functions so "can I
+        # see them in the list" and "can I open their profile" agree.
+        from core.utils import get_gm_scope, get_manager_team
+        if request.user.role == User.ROLE_GENERAL_MANAGER:
+            in_scope = get_gm_scope(request.user).filter(id=emp_user.id).exists()
+        else:
+            in_scope = get_manager_team(request.user).filter(id=emp_user.id).exists()
+        if not in_scope:
+            messages.error(request, "You can only view profiles of your own team.")
             return redirect('employees:my_department')
 
     can_view_salary = _can_view_salary(request.user)
@@ -1025,12 +1039,18 @@ def my_department(request):
         messages.error(request, "Only managers can view this page.")
         return redirect('core:dashboard')
 
-    staff = list(
-        User.objects.filter(
-            department=request.user.department,
-            branch=request.user.branch,
-        ).exclude(id=request.user.id).select_related('profile')
-    )
+    # Same fix as employee_detail: a flat department+branch match missed
+    # people who are clearly on this manager's team via project
+    # assignment (e.g. a GM's project members from a different
+    # department) — use the same scope functions the Directory and
+    # employee_detail already rely on, so "my team" agrees everywhere.
+    from core.utils import get_gm_scope, get_manager_team
+    if request.user.role == User.ROLE_GENERAL_MANAGER:
+        team_qs = get_gm_scope(request.user)
+    else:
+        team_qs = get_manager_team(request.user)
+
+    staff = list(team_qs.exclude(id=request.user.id).select_related('profile'))
     present_user_ids = _present_user_ids_today()
     for s in staff:
         s.is_present_today = s.id in present_user_ids
@@ -1043,7 +1063,12 @@ def team_member_detail(request, user_id):
         messages.error(request, "Only managers can view this page.")
         return redirect('core:dashboard')
 
-    emp_user = get_object_or_404(User, id=user_id, department=request.user.department, branch=request.user.branch)
+    from core.utils import get_gm_scope, get_manager_team
+    if request.user.role == User.ROLE_GENERAL_MANAGER:
+        team_qs = get_gm_scope(request.user)
+    else:
+        team_qs = get_manager_team(request.user)
+    emp_user = get_object_or_404(team_qs, id=user_id)
     if emp_user.id == request.user.id:
         messages.error(request, "You cannot view your own team member page.")
         return redirect('employees:my_department')
@@ -1219,19 +1244,34 @@ def appraisal_dashboard(request):
     """Increment-relevant appraisal calculation (target vs actual, and the
     resulting efficiency %). This is only for HR's own manual review when
     deciding increments â€” not shown on Manager/PM/COO dashboards."""
-    employees = User.objects.filter(
-        role='EMPLOYEE',
-        department__name__icontains='Production',
-        profile__status='ACTIVE'
-    )
-    if not (request.user.role == 'ADMIN' or getattr(request.user, 'can_access_all_branches', False)):
-        employees = employees.filter(branch=request.user.branch)
-
     date_str = request.GET.get('date', timezone.localdate().strftime('%Y-%m-%d'))
     try:
         selected_date = datetime.strptime(date_str, '%Y-%m-%d').date()
     except ValueError:
         selected_date = timezone.localdate()
+
+    from django.db.models import Q
+    base_employees = User.objects.filter(role='EMPLOYEE', profile__status='ACTIVE')
+    if not (request.user.role == 'ADMIN' or getattr(request.user, 'can_access_all_branches', False)):
+        base_employees = base_employees.filter(branch=request.user.branch)
+
+    # Same gap as tracker_dashboard: department name/is_qa alone missed
+    # employees who are clearly Production/QA via an actual project
+    # assignment or a logged appraisal entry, so fold those in too.
+    project_ids = set(
+        ProjectAssignment.objects.filter(user__in=base_employees, is_current=True)
+        .exclude(project__status='COMPLETED').values_list('user_id', flat=True)
+    )
+    appraised_ids = set(
+        ProductionAppraisal.objects.filter(user__in=base_employees, date=selected_date)
+        .values_list('user_id', flat=True)
+    )
+    employees = base_employees.filter(
+        Q(department__name__icontains='Production') |
+        Q(department__is_qa=True) |
+        Q(id__in=project_ids) |
+        Q(id__in=appraised_ids)
+    ).distinct()
 
     rows = ProductionAppraisal.objects.filter(date=selected_date, user__in=employees)
     totals = {}

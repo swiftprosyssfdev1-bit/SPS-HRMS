@@ -6,9 +6,9 @@ app_name = 'employees'
 urlpatterns = [
     path('me/', views.my_profile, name='my_profile'),
     path('me/upload-document/', views.upload_own_document, name='upload_own_document'),
+    path('me/documents/<int:doc_id>/delete/', views.delete_own_document, name='delete_own_document'),
     path('letters/issue/', views.issue_letter, name='issue_letter'),
     path('letters/mine/', views.my_letters, name='my_letters'),
-    path('<int:user_id>/documents/<int:doc_id>/delete/', views.delete_document, name='delete_document'),
     path('documents/<int:doc_id>/download/', views.download_document, name='download_document'),
     
     path('resign/', views.apply_resignation, name='apply_resignation'),

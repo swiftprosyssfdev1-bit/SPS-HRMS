@@ -1,7 +1,7 @@
 import re
 import sqlparse
 from sqlparse.sql import IdentifierList, Identifier
-from sqlparse.tokens import Keyword, DML
+from sqlparse.tokens import Keyword
 
 # Safe tables to query
 ALLOWLIST_TABLES = {

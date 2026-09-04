@@ -1,6 +1,6 @@
 from django import forms
 from core.validators import (
-    name_validator, phone_validator, alnum_id_validator,
+    name_validator, phone_validator,
     bank_account_validator, ifsc_validator, pan_validator, aadhar_validator,
     COUNTRY_CODES,
 )

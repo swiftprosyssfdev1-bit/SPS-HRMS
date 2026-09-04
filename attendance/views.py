@@ -11,7 +11,7 @@ from core.models import User
 from attendance.models import AttendanceRecord, MonthlyAttendanceSheet 
 from attendance.utils import (
     normalize_year_month, build_monthly_summary, generate_monthly_excel,
-    regenerate_and_save_monthly_sheet, build_team_monthly_summary,
+    regenerate_and_save_monthly_sheet,
     build_team_cycle_summary, pay_cycle_bounds, build_payroll_cycle_summary,
     generate_team_monthly_excel, build_weekly_summary, build_yearly_summary,
     generate_weekly_excel, generate_yearly_excel, get_week_options,
@@ -78,9 +78,19 @@ def attendance_reports(request):
 def employee_attendance(request, user_id):
     emp_user = get_object_or_404(User, id=user_id)
 
-    if request.user.is_manager() and request.user.role not in ('HR', 'SENIOR_HR', 'ADMIN'):
-        if emp_user.department_id != request.user.department_id:
-            messages.error(request, "You can only view attendance for your own department's staff.")
+    if request.user.is_manager():
+        # Same fix as employees.employee_detail/my_department: a flat
+        # department_id comparison misses people on this manager's team
+        # via project assignment. Use the same scope functions so "can I
+        # see them in Directory/my team" and "can I see their attendance"
+        # agree.
+        from core.utils import get_gm_scope
+        if request.user.role == User.ROLE_GENERAL_MANAGER:
+            in_scope = get_gm_scope(request.user).filter(id=emp_user.id).exists()
+        else:
+            in_scope = get_manager_team(request.user).filter(id=emp_user.id).exists()
+        if not in_scope:
+            messages.error(request, "You can only view attendance for your own team.")
             return redirect('employees:my_department')
 
     records = AttendanceRecord.objects.filter(user=emp_user)
