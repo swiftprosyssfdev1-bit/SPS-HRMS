@@ -14,7 +14,7 @@ from core.utils import user_can_switch_branch
 from attendance.models import AttendanceRecord
 from employees.models import EmployeeProfile, EmployeeDocument, ResignationRequest, BankDetail, TrainingFeedback
 from employees.forms import (
-    EmployeeSelfEditForm, NewEmployeeForm, IssueLetterForm, SelfDocumentForm,
+    EmployeeSelfEditForm, IssueLetterForm, SelfDocumentForm,
     RoleChangeForm, ResignationRequestForm, HREmployeeEditForm,
     EmployeeIdentityForm, BankDetailForm, OnboardHRForm,
     TrainingFeedbackForm, TrainingDurationForm, TrainingReviewForm,
@@ -53,17 +53,23 @@ def _can_review_resignation(acting_user, resignation):
 
 
 def _can_edit_identity(acting_user, emp_user):
-    """Senior HR and Admin can edit anyone. HR can edit anyone except Admins, COOs, and Senior HR.
-    A Manager can only edit members of their own department, and never themselves."""
-    if acting_user.role in ('SENIOR_HR', 'ADMIN', 'COO'):
+    """Senior HR and COO can edit anyone. HR can edit anyone except Admins,
+    COOs, and Senior HR. Admin and Managers are view-only -- they can see
+    an employee's personal details but cannot edit them (that's HR's job)."""
+    if acting_user.role in ('SENIOR_HR', 'COO'):
         return True
     if acting_user.role == 'HR':
         if emp_user.role in ('ADMIN', 'COO', 'SENIOR_HR'):
             return False
         return True
-    if acting_user.is_manager():
-        return emp_user.department_id is not None and emp_user.department_id == acting_user.department_id and emp_user.id != acting_user.id
     return False
+
+
+def _can_view_salary(acting_user):
+    """Salary/compensation details are HR-confidential -- visible to HR,
+    Senior HR, and COO only. Admin and Managers (including PM/GM) can view
+    an employee's personal details but never salary figures."""
+    return acting_user.role in ('HR', 'SENIOR_HR', 'COO')
 
 
 def _department_sort_key(dept_name):
@@ -393,50 +399,9 @@ def quit_after_negotiation(request, resignation_id):
     return redirect('employees:my_profile')
 
 
-@hr_only_required
-def onboard_employee(request):
-    active_branch = getattr(request, 'active_branch', None)
-    if request.method == 'POST':
-        form = NewEmployeeForm(request.POST, acting_user=request.user)
-        if form.is_valid():
-            user = form.save(commit=False)
-            if not user_can_switch_branch(request.user):
-                user.branch = request.user.branch
-            user.set_password(form.cleaned_data['password'])
-            department = form.cleaned_data.get('department')
-            if department and department.manager_id and user.role != User.ROLE_MANAGER:
-                user.manager = department.manager
-            else:
-                user.manager = None
-            user.employee_id = generate_employee_id(user.branch)
-            user.save()
-            profile = EmployeeProfile.objects.create(user=user, status='ONBOARDING')
-            profile.enrollment_id = generate_enrollment_id(user.branch)
-            profile.save()
-            BankDetail.objects.get_or_create(user=user)
-            # Auto-create training feedback record so HR can track the 30-day
-            # training period and PM can submit feedback.
-            TrainingFeedback.objects.create(
-                employee=user,
-                training_start_date=user.date_joined_company,
-                training_duration_days=30,
-            )
-            project = form.cleaned_data.get('project')
-            if project:
-                ProjectAssignment.objects.create(
-                    project=project, user=user,
-                    role_on_project='Team Member',
-                    start_date=timezone.localdate(),
-                )
-            messages.success(request, f'{user} onboarded successfully (Employee ID {user.employee_id}, Enrollment ID {profile.enrollment_id}). Share their login credentials securely.')
-            return redirect('employees:employee_detail', user_id=user.id)
-    else:
-        initial = {}
-        if active_branch and not user_can_switch_branch(request.user):
-            initial['branch'] = active_branch.id
-        form = NewEmployeeForm(initial=initial, acting_user=request.user)
-
-    return render(request, 'employees/onboard.html', {'form': form, 'locked_branch': not user_can_switch_branch(request.user)})
+# NOTE: onboard_employee (NewEmployeeForm / onboard.html) was removed.
+# onboard_hr below already handles every role — Employee, Manager, HR,
+# Admin, and COO — so it's the single entry point for onboarding now.
 
 
 @role_required('ADMIN')
@@ -568,7 +533,7 @@ def employee_directory(request):
         employees = employees.filter(id__in=list(team_ids))
     elif active_branch:
         # Everyone else sees the directory for the currently selected active branch (Admins and COOs are also visible everywhere)
-        employees = employees.filter(Q(branch=active_branch) | Q(role__in=['ADMIN', 'COO'])).distinct()
+        employees = employees.filter(Q(branch=active_branch) | Q(role__in=['ADMIN', 'COO', 'HR', 'SENIOR_HR'])).distinct()
     else:
         # Prevent users from seeing all data if they lack an active branch
         employees = User.objects.none()
@@ -685,19 +650,45 @@ def employee_detail(request, user_id):
         messages.error(request, "You do not have permission to view this account.")
         return redirect('employees:directory')
 
-    if request.user.is_manager() and request.user.role not in ('HR', 'SENIOR_HR', 'ADMIN'):
-        if emp_user.department_id != request.user.department_id:
-            messages.error(request, "You can only view profiles of your own department's staff.")
+    if request.user.is_manager():
+        # Directory scoping already uses richer, role-specific logic
+        # (a GM's scope includes every project they GM even outside
+        # their own department; a PM's scope includes their project
+        # team). This check used to be a flat department_id comparison,
+        # which meant a GM could SEE someone in the directory (via
+        # get_gm_scope) but then get blocked here from opening their
+        # profile, since that check ignored project membership
+        # entirely. Now it reuses the same scope functions so "can I
+        # see them in the list" and "can I open their profile" agree.
+        from core.utils import get_gm_scope, get_manager_team
+        if request.user.role == User.ROLE_GENERAL_MANAGER:
+            in_scope = get_gm_scope(request.user).filter(id=emp_user.id).exists()
+        else:
+            in_scope = get_manager_team(request.user).filter(id=emp_user.id).exists()
+        if not in_scope:
+            messages.error(request, "You can only view profiles of your own team.")
             return redirect('employees:my_department')
 
+    can_view_salary = _can_view_salary(request.user)
+    # Statutory IDs (Aadhar/PAN/UAN/ESI), bank details, references, and
+    # uploaded documents (offer letters etc.) are the same HR-confidential
+    # tier as salary -- visible to HR/Senior HR/COO only, hidden from
+    # Admin and Managers/PM/GM even though they can view the rest of the
+    # profile.
+    can_view_confidential = can_view_salary
+
     profile, _ = EmployeeProfile.objects.get_or_create(user=emp_user)
-    bank_detail, _ = BankDetail.objects.get_or_create(user=emp_user)
-    documents = emp_user.documents.all()
+    if can_view_confidential:
+        bank_detail, _ = BankDetail.objects.get_or_create(user=emp_user)
+        documents = emp_user.documents.all()
+    else:
+        bank_detail = None
+        documents = emp_user.documents.none()
     role_form = RoleChangeForm(instance=emp_user, acting_user=request.user)
     latest_resignation = ResignationRequest.objects.filter(user=emp_user).first()
     can_review_resignation = _can_review_resignation(request.user, latest_resignation) if latest_resignation else False
 
-    salary_structure = SalaryStructure.objects.filter(user=emp_user).first()
+    salary_structure = SalaryStructure.objects.filter(user=emp_user).first() if can_view_salary else None
 
     increments_qs = IncrementRequest.objects.filter(user=emp_user, status='APPROVED').order_by('-effective_date')
     increment_count = increments_qs.count()
@@ -711,10 +702,46 @@ def employee_detail(request, user_id):
         'documents': documents,
         'role_form': role_form, 'latest_resignation': latest_resignation,
         'can_review_resignation': can_review_resignation,
-        'salary_structure': salary_structure,
+        'salary_structure': salary_structure, 'can_view_salary': can_view_salary,
+        'can_view_confidential': can_view_confidential,
         'increment_count': increment_count, 'latest_increment': latest_increment,
         'edit_mode': edit_mode, 'can_edit_identity': can_edit_identity,
     })
+
+
+@admin_only_required
+def reset_employee_credentials(request, user_id):
+    """Admin-only: change an employee's username and/or password.
+    Deliberately narrower than edit_employee_profile — Admin can reset
+    login credentials for anyone (HR, COO, CTO, GM, PM, Employee, etc.)
+    but cannot touch personal/identity fields, which remain HR's job
+    per _can_edit_identity."""
+    emp_user = get_object_or_404(User, id=user_id)
+
+    if request.method == 'POST':
+        new_username = request.POST.get('username', '').strip()
+        new_password = request.POST.get('new_password', '')
+
+        changed = False
+        if new_username and new_username != emp_user.username:
+            if User.objects.exclude(id=emp_user.id).filter(username=new_username).exists():
+                messages.error(request, f'Username "{new_username}" is already taken.')
+                return redirect('employees:reset_employee_credentials', user_id=emp_user.id)
+            emp_user.username = new_username
+            changed = True
+
+        if new_password:
+            emp_user.set_password(new_password)
+            changed = True
+
+        if changed:
+            emp_user.save()
+            messages.success(request, f'Login credentials updated for {emp_user}.')
+        else:
+            messages.info(request, 'Nothing to update — enter a new username and/or password.')
+        return redirect('employees:employee_detail', user_id=emp_user.id)
+
+    return render(request, 'employees/reset_credentials.html', {'emp_user': emp_user})
 
 
 @login_required
@@ -731,7 +758,7 @@ def update_employee_status(request, user_id):
     )
     if not is_authorized:
         messages.error(request, "You do not have permission to perform this action.")
-        return redirect('employees:edit_employee_profile', user_id=emp_user.id)
+        return redirect('employees:employee_detail', user_id=emp_user.id)
 
     profile, _ = EmployeeProfile.objects.get_or_create(user=emp_user)
 
@@ -745,7 +772,16 @@ def update_employee_status(request, user_id):
             messages.success(request, f"{emp_user}'s status changed to {profile.get_status_display()}.")
         else:
             messages.error(request, "Invalid status selected.")
-    return redirect('employees:edit_employee_profile', user_id=emp_user.id)
+
+    # HR/Senior HR/COO land back on Edit Profile, where this control also
+    # lives for them. Admin doesn't have access to that page (it's
+    # identity-data editing, not just status), so send Admin back to the
+    # read-only detail page instead — otherwise they'd get bounced by
+    # _can_edit_identity and see a confusing "no permission" message
+    # right after a successful update.
+    if _can_edit_identity(request.user, emp_user):
+        return redirect('employees:edit_employee_profile', user_id=emp_user.id)
+    return redirect('employees:employee_detail', user_id=emp_user.id)
 
 
 @hr_only_required
@@ -1003,12 +1039,18 @@ def my_department(request):
         messages.error(request, "Only managers can view this page.")
         return redirect('core:dashboard')
 
-    staff = list(
-        User.objects.filter(
-            department=request.user.department,
-            branch=request.user.branch,
-        ).exclude(id=request.user.id).select_related('profile')
-    )
+    # Same fix as employee_detail: a flat department+branch match missed
+    # people who are clearly on this manager's team via project
+    # assignment (e.g. a GM's project members from a different
+    # department) — use the same scope functions the Directory and
+    # employee_detail already rely on, so "my team" agrees everywhere.
+    from core.utils import get_gm_scope, get_manager_team
+    if request.user.role == User.ROLE_GENERAL_MANAGER:
+        team_qs = get_gm_scope(request.user)
+    else:
+        team_qs = get_manager_team(request.user)
+
+    staff = list(team_qs.exclude(id=request.user.id).select_related('profile'))
     present_user_ids = _present_user_ids_today()
     for s in staff:
         s.is_present_today = s.id in present_user_ids
@@ -1021,7 +1063,12 @@ def team_member_detail(request, user_id):
         messages.error(request, "Only managers can view this page.")
         return redirect('core:dashboard')
 
-    emp_user = get_object_or_404(User, id=user_id, department=request.user.department, branch=request.user.branch)
+    from core.utils import get_gm_scope, get_manager_team
+    if request.user.role == User.ROLE_GENERAL_MANAGER:
+        team_qs = get_gm_scope(request.user)
+    else:
+        team_qs = get_manager_team(request.user)
+    emp_user = get_object_or_404(team_qs, id=user_id)
     if emp_user.id == request.user.id:
         messages.error(request, "You cannot view your own team member page.")
         return redirect('employees:my_department')
@@ -1078,11 +1125,15 @@ def onboard_hr(request):
             user.role = role
             user.set_password(form.cleaned_data['password'])
 
-            if role in (User.ROLE_EMPLOYEE, User.ROLE_MANAGER):
+            if role in (User.ROLE_EMPLOYEE, User.ROLE_MANAGER, User.ROLE_PROJECT_MANAGER,
+                        User.ROLE_GENERAL_MANAGER, User.ROLE_CTO):
+                # Branch-scoped operational roles — same onboarding path
+                # as Employee/Manager: department/manager assignment,
+                # employee_id, enrollment_id, bank detail record.
                 branch = form.cleaned_data['branch']
                 department = form.cleaned_data.get('department')
                 user.branch = branch
-                if department and department.manager_id and role != User.ROLE_MANAGER:
+                if department and department.manager_id and role == User.ROLE_EMPLOYEE:
                     user.manager = department.manager
                 else:
                     user.manager = None
@@ -1094,14 +1145,31 @@ def onboard_hr(request):
                 profile.save()
                 BankDetail.objects.get_or_create(user=user)
 
-                role_label = 'Manager' if role == User.ROLE_MANAGER else 'Employee'
+                # Departments with a default_project (e.g. a single-project
+                # team) already get auto-assigned by
+                # core.signals.auto_assign_to_department_project on
+                # user.save() above. Departments without one (e.g.
+                # Production, which spans several projects) need HR's
+                # manual Project pick from the form instead.
+                manual_project = form.cleaned_data.get('project')
+                if manual_project and (not department or not department.default_project_id):
+                    from projects.models import ProjectAssignment
+                    ProjectAssignment.objects.get_or_create(
+                        project=manual_project, user=user, is_current=True,
+                        defaults={
+                            'role_on_project': user.get_role_display(),
+                            'start_date': timezone.localdate(),
+                        },
+                    )
+
+                role_label = dict(User.ROLE_CHOICES).get(role, role)
                 messages.success(
                     request,
                     f'{user} onboarded as {role_label} successfully (Employee ID {user.employee_id}, Enrollment ID {profile.enrollment_id}).'
                 )
                 return redirect('employees:employee_detail', user_id=user.id)
 
-            else:  # HR, Admin, or COO
+            else:  # HR, Senior HR, Admin, or COO
                 user.manager = None
                 accessible = form.cleaned_data['accessible_branches']
                 user.branch = _primary_branch(accessible)
@@ -1133,7 +1201,14 @@ def onboard_hr(request):
     else:
         form = OnboardHRForm(acting_user=request.user)
 
-    return render(request, 'employees/onboard_hr.html', {'form': form})
+    return render(request, 'employees/onboard_hr.html', {
+        'form': form,
+        # The manual Project field (for departments like Production that
+        # have no single default_project to auto-assign from) is only
+        # relevant to HR/Senior HR onboarding — Admin/COO onboarding
+        # never needs to set a new hire's project.
+        'show_project_field': request.user.role in (User.ROLE_HR, User.ROLE_SENIOR_HR),
+    })
 
 @login_required
 def complete_onboarding(request, user_id):
@@ -1169,19 +1244,34 @@ def appraisal_dashboard(request):
     """Increment-relevant appraisal calculation (target vs actual, and the
     resulting efficiency %). This is only for HR's own manual review when
     deciding increments â€” not shown on Manager/PM/COO dashboards."""
-    employees = User.objects.filter(
-        role='EMPLOYEE',
-        department__name__icontains='Production',
-        profile__status='ACTIVE'
-    )
-    if not (request.user.role == 'ADMIN' or getattr(request.user, 'can_access_all_branches', False)):
-        employees = employees.filter(branch=request.user.branch)
-
     date_str = request.GET.get('date', timezone.localdate().strftime('%Y-%m-%d'))
     try:
         selected_date = datetime.strptime(date_str, '%Y-%m-%d').date()
     except ValueError:
         selected_date = timezone.localdate()
+
+    from django.db.models import Q
+    base_employees = User.objects.filter(role='EMPLOYEE', profile__status='ACTIVE')
+    if not (request.user.role == 'ADMIN' or getattr(request.user, 'can_access_all_branches', False)):
+        base_employees = base_employees.filter(branch=request.user.branch)
+
+    # Same gap as tracker_dashboard: department name/is_qa alone missed
+    # employees who are clearly Production/QA via an actual project
+    # assignment or a logged appraisal entry, so fold those in too.
+    project_ids = set(
+        ProjectAssignment.objects.filter(user__in=base_employees, is_current=True)
+        .exclude(project__status='COMPLETED').values_list('user_id', flat=True)
+    )
+    appraised_ids = set(
+        ProductionAppraisal.objects.filter(user__in=base_employees, date=selected_date)
+        .values_list('user_id', flat=True)
+    )
+    employees = base_employees.filter(
+        Q(department__name__icontains='Production') |
+        Q(department__is_qa=True) |
+        Q(id__in=project_ids) |
+        Q(id__in=appraised_ids)
+    ).distinct()
 
     rows = ProductionAppraisal.objects.filter(date=selected_date, user__in=employees)
     totals = {}

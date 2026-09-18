@@ -76,7 +76,7 @@ def due_for_annual_increment_count(active_branch=None):
     return count
 
 
-@hr_or_admin_required
+@hr_only_required
 def increment_list(request):
     today = timezone.localdate()
     active_branch = getattr(request, 'active_branch', None)

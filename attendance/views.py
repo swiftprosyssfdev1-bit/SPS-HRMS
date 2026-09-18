@@ -6,12 +6,12 @@ from django.contrib import messages
 from django.http import HttpResponse
 from django.utils import timezone
 
-from core.decorators import hr_or_admin_required,hr_only_required
+from core.decorators import hr_or_admin_required, hr_only_required, hr_admin_or_manager_required
 from core.models import User
 from attendance.models import AttendanceRecord, MonthlyAttendanceSheet 
 from attendance.utils import (
     normalize_year_month, build_monthly_summary, generate_monthly_excel,
-    regenerate_and_save_monthly_sheet, build_team_monthly_summary,
+    regenerate_and_save_monthly_sheet,
     build_team_cycle_summary, pay_cycle_bounds, build_payroll_cycle_summary,
     generate_team_monthly_excel, build_weekly_summary, build_yearly_summary,
     generate_weekly_excel, generate_yearly_excel, get_week_options,
@@ -74,9 +74,25 @@ def attendance_reports(request):
     return render(request, 'attendance/reports.html', {'records': records, 'late_count': late_count})
 
 
-@hr_or_admin_required
+@hr_admin_or_manager_required
 def employee_attendance(request, user_id):
     emp_user = get_object_or_404(User, id=user_id)
+
+    if request.user.is_manager():
+        # Same fix as employees.employee_detail/my_department: a flat
+        # department_id comparison misses people on this manager's team
+        # via project assignment. Use the same scope functions so "can I
+        # see them in Directory/my team" and "can I see their attendance"
+        # agree.
+        from core.utils import get_gm_scope
+        if request.user.role == User.ROLE_GENERAL_MANAGER:
+            in_scope = get_gm_scope(request.user).filter(id=emp_user.id).exists()
+        else:
+            in_scope = get_manager_team(request.user).filter(id=emp_user.id).exists()
+        if not in_scope:
+            messages.error(request, "You can only view attendance for your own team.")
+            return redirect('employees:my_department')
+
     records = AttendanceRecord.objects.filter(user=emp_user)
     return render(request, 'attendance/employee_attendance.html', {'emp_user': emp_user, 'records': records})
 

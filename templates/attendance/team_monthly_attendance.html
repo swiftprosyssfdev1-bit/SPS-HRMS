@@ -80,7 +80,7 @@
       <th>Total Days to Pay</th>
       <th>Days in Month</th>
       <th>LOP</th>
-      <th>Salary</th>
+      {% if request.user.role != 'ADMIN' %}<th>Salary</th>{% endif %}
       <th></th>
     </tr>
     {% for s in summaries %}
@@ -112,7 +112,7 @@
       <td style="text-align:center; font-weight:600;">{{ s.total_days_to_pay }}</td>
       <td style="text-align:center;">{{ s.days_in_month }}</td>
       <td style="text-align:center;">{{ s.lop }}</td>
-      <td style="text-align:center;">{% if s.salary %}Rs. {{ s.salary }}{% else %}-{% endif %}</td>
+      {% if request.user.role != 'ADMIN' %}<td style="text-align:center;">{% if s.salary %}Rs. {{ s.salary }}{% else %}-{% endif %}</td>{% endif %}
       <td><a href="{% url 'attendance:employee_attendance_view' s.user.id %}?view=monthly&year={{ year }}&month={{ month }}" class="btn btn-outline btn-sm">Details</a></td>
     </tr>
     {% empty %}

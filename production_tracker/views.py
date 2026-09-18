@@ -15,7 +15,7 @@ from core.models import User
 from .forms import DailyProductionForm
 from .models import (
     HOUR_SLOTS, STANDARD_SHIFT_HOURS, DailyProduction, HourlyEntry, ProductionEvent,
-    apply_project_daily_target,
+    ProductionProcess, apply_project_daily_target,
 )
 
 
@@ -271,6 +271,7 @@ def daily_entry(request):
         'hourly_rows': hourly_rows,
         'today': today,
         'event_options': ProductionEvent.objects.filter(is_active=True).order_by('name'),
+        'process_options': ProductionProcess.objects.filter(is_active=True).order_by('name'),
         'day_records': day_records,
         'is_new_unsaved': is_new_unsaved,
         'project_targets': project_targets,
@@ -382,15 +383,33 @@ def tracker_dashboard(request):
 
     if is_hr_admin:
         from django.db.models import Q
-        employees = User.objects.filter(
-            role='EMPLOYEE',
-            profile__status='ACTIVE'
-        ).filter(
-            Q(department__name__icontains='Production') |
-            Q(department__is_qa=True)
-        )
+        base_employees = User.objects.filter(role='EMPLOYEE', profile__status='ACTIVE')
         if not (request.user.role == 'ADMIN' or getattr(request.user, 'can_access_all_branches', False)):
-            employees = employees.filter(branch=request.user.branch)
+            base_employees = base_employees.filter(branch=request.user.branch)
+
+        # Same gap the ops-manager (PM/GM) branch below already accounts
+        # for: an employee can be on a Production/QA project — and show
+        # up fine in the PM/GM's own Team Overview — without their
+        # department literally being named "Production" or flagged
+        # is_qa (e.g. no department set at all yet). Department match
+        # alone silently dropped them from HR's view even though they
+        # were clearly visible elsewhere, so also pull in anyone with a
+        # current assignment to a non-completed project, or who already
+        # logged an entry for this date.
+        project_ids = set(
+            ProjectAssignment.objects.filter(user__in=base_employees, is_current=True)
+            .exclude(project__status='COMPLETED').values_list('user_id', flat=True)
+        )
+        submitted_ids = set(
+            DailyProduction.objects.filter(employee__in=base_employees, date=selected_date)
+            .values_list('employee_id', flat=True)
+        )
+        employees = base_employees.filter(
+            Q(department__name__icontains='Production') |
+            Q(department__is_qa=True) |
+            Q(id__in=project_ids) |
+            Q(id__in=submitted_ids)
+        ).distinct()
         assignments = ProjectAssignment.objects.filter(
             user__in=employees, is_current=True
         ).exclude(project__status='COMPLETED').select_related('project')
@@ -535,6 +554,7 @@ def tracker_dashboard(request):
     # QA Target: the QA Manager only.
     can_set_production_target = can_set_target and not is_qa_dept_manager
     can_set_qa_target = is_qa_dept_manager
+    can_export = request.user.role in ('MANAGER', 'PROJECT_MANAGER', 'GENERAL_MANAGER', 'CTO', 'HR', 'SENIOR_HR', 'ADMIN', 'COO')
     context = {
         'project_groups': list(project_groups.items()),
         'unassigned_rows': unassigned_rows,
@@ -544,6 +564,7 @@ def tracker_dashboard(request):
         'is_qa_dept_manager': is_qa_dept_manager,
         'can_set_production_target': can_set_production_target,
         'can_set_qa_target': can_set_qa_target,
+        'can_export': can_export,
     }
     return render(request, 'production_tracker/dashboard.html', context)
 
@@ -681,7 +702,7 @@ def set_target(request, user_id):
     return redirect(f"{reverse('production_tracker:dashboard')}?date={selected_date}")
 
 
-@role_required('MANAGER', 'PROJECT_MANAGER', 'HR', 'SENIOR_HR', 'ADMIN', 'COO')
+@role_required('MANAGER', 'PROJECT_MANAGER', 'GENERAL_MANAGER', 'CTO', 'HR', 'SENIOR_HR', 'ADMIN', 'COO')
 def export_tracker_excel(request):
     selected_date = _parse_date(request.GET.get('date'))
     month_start = selected_date.replace(day=1)
@@ -692,15 +713,67 @@ def export_tracker_excel(request):
         month_end = month_start.replace(month=month_start.month + 1)
         
     from django.db.models import Q
-    employees = User.objects.filter(
-        role='EMPLOYEE',
-        profile__status='ACTIVE'
-    ).filter(
-        Q(department__name__icontains='Production') |
-        Q(department__is_qa=True)
+    from projects.models import ProjectAssignment, Project
+
+    is_hr_admin = request.user.role in ('HR', 'SENIOR_HR', 'ADMIN', 'COO')
+    is_qa_dept_manager = (
+        request.user.role == 'MANAGER' and request.user.department
+        and request.user.department.is_qa
+    )
+    is_ops_manager = request.user.role in ('MANAGER', 'PROJECT_MANAGER') and not is_qa_dept_manager
+
+    base_employees = User.objects.filter(
+        role='EMPLOYEE', profile__status='ACTIVE'
     ).exclude(id__in=_tl_pl_user_ids())
     if not (request.user.role == 'ADMIN' or getattr(request.user, 'can_access_all_branches', False)):
-        employees = employees.filter(branch=request.user.branch)
+        base_employees = base_employees.filter(branch=request.user.branch)
+
+    if is_hr_admin:
+        # Same gap as tracker_dashboard/appraisal_dashboard: department
+        # name/is_qa alone missed employees who are clearly Production/QA
+        # via an actual project assignment or a logged entry that month.
+        project_ids = set(
+            ProjectAssignment.objects.filter(user__in=base_employees, is_current=True)
+            .exclude(project__status='COMPLETED').values_list('user_id', flat=True)
+        )
+        month_submitted_ids = set(
+            DailyProduction.objects.filter(
+                employee__in=base_employees, date__gte=month_start, date__lt=month_end
+            ).values_list('employee_id', flat=True)
+        )
+        employees = base_employees.filter(
+            Q(department__name__icontains='Production') |
+            Q(department__is_qa=True) |
+            Q(id__in=project_ids) |
+            Q(id__in=month_submitted_ids)
+        ).distinct()
+    elif is_qa_dept_manager:
+        employees = base_employees.filter(department=request.user.department)
+    elif is_ops_manager:
+        # Restrict to the projects THIS manager/PM actually manages,
+        # leads, or is assigned to — matching the live Team Overview
+        # dashboard instead of giving branch-wide export access.
+        managed_ids = set(Project.objects.filter(manager=request.user).values_list('id', flat=True))
+        managed_ids |= set(Project.objects.filter(gm=request.user).values_list('id', flat=True))
+        managed_ids |= set(Project.objects.filter(lead=request.user).values_list('id', flat=True))
+        managed_ids |= set(ProjectAssignment.objects.filter(user=request.user, is_current=True).values_list('project_id', flat=True))
+
+        assigned_ids = set(
+            ProjectAssignment.objects.filter(
+                project_id__in=managed_ids, is_current=True, user__in=base_employees
+            ).values_list('user_id', flat=True)
+        )
+        month_submitted_ids = set(
+            DailyProduction.objects.filter(
+                project_id__in=managed_ids, employee__in=base_employees,
+                date__gte=month_start, date__lt=month_end
+            ).values_list('employee_id', flat=True)
+        )
+        employees = base_employees.filter(
+            Q(id__in=assigned_ids) | Q(id__in=month_submitted_ids)
+        ).distinct()
+    else:
+        employees = User.objects.none()
     records = DailyProduction.objects.filter(
         employee__in=employees,
         date__gte=month_start,

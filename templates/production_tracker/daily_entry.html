@@ -100,7 +100,7 @@
         {{ form.event }}
       </div>
       <div>
-        <label>Grouping</label>
+        <label>Training</label>
         {{ form.grouping }}
       </div>
       <div>
@@ -165,6 +165,13 @@
 <datalist id="event-datalist">
   {% for ev in event_options %}
     <option value="{{ ev.name }}">
+  {% endfor %}
+</datalist>
+
+{# Datalist so the browser shows existing processes as suggestions while typing #}
+<datalist id="process-datalist">
+  {% for p in process_options %}
+    <option value="{{ p.name }}">
   {% endfor %}
 </datalist>
 

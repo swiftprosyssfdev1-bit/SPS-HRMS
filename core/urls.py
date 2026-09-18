@@ -31,6 +31,7 @@ urlpatterns = [
     ), name='password_reset_complete'),
 
     path('set-branch/', views.set_active_branch, name='set_active_branch'),
+    path('motivational-posts/', views.manage_motivational_post, name='manage_motivational_post'),
 ]
 
 

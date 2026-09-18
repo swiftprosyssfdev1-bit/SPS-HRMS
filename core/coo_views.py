@@ -51,6 +51,12 @@ def coo_dashboard(request):
     tab = request.GET.get('tab', 'directory')
     context = {'tab': tab}
 
+    try:
+        from core.models import MotivationalPost
+        context['motivational_post'] = MotivationalPost.objects.filter(is_active=True).first()
+    except Exception:
+        pass
+
     coo_branch = request.user.branch
 
     if tab == 'directory':

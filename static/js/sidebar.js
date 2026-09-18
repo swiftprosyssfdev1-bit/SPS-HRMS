@@ -71,4 +71,16 @@ document.addEventListener('DOMContentLoaded', function () {
       localStorage.setItem(storageKey, String(nowCollapsed));
     });
   });
+
+  // Maintain scroll position of the sidebar menu across page loads
+  var sidebarMenu = document.querySelector('.sidebar-menu');
+  if (sidebarMenu) {
+    var scrollPos = localStorage.getItem('sidebarScrollPos');
+    if (scrollPos) {
+      sidebarMenu.scrollTop = parseInt(scrollPos, 10);
+    }
+    window.addEventListener('beforeunload', function () {
+      localStorage.setItem('sidebarScrollPos', sidebarMenu.scrollTop);
+    });
+  }
 });

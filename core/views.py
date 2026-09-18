@@ -282,6 +282,12 @@ def dashboard(request):
 
     today = timezone.localdate()
     context['today_record'] = AttendanceRecord.objects.filter(user=user, date=today).first()
+    
+    try:
+        from core.models import MotivationalPost
+        context['motivational_post'] = MotivationalPost.objects.filter(is_active=True).first()
+    except Exception:
+        pass
 
     active_branch = getattr(request, 'active_branch', None)
 
@@ -296,7 +302,6 @@ def dashboard(request):
         context['month_attendance'] = AttendanceRecord.objects.filter(
             user=user, date__year=today.year, date__month=today.month, in_time__isnull=False
         ).count()
-        from leaves.models import LeaveRequest
         context['my_pending_leaves'] = LeaveRequest.objects.filter(
             user=user, status='PENDING'
         ).count()
@@ -549,7 +554,9 @@ def dashboard(request):
         team_ids = list(team.values_list('id', flat=True))
 
         if team_ids:
+            import calendar
             month_start = today.replace(day=1)
+            month_end = today.replace(day=calendar.monthrange(today.year, today.month)[1])
 
             leave_type_labels = {'CL': 'Casual Leave', 'EL': 'Earned Leave', 'SICK': 'Sick Leave'}
             used_by_type = {'CL': 0, 'EL': 0, 'SICK': 0}
@@ -557,7 +564,7 @@ def dashboard(request):
             approved_requests = LeaveRequest.objects.filter(
                 user_id__in=team_ids, request_type='LEAVE', status='APPROVED',
                 leave_type__in=['CL', 'EL', 'SICK'],
-                start_date__gte=month_start, start_date__lte=today,
+                start_date__gte=month_start, start_date__lte=month_end,
             )
             for req in approved_requests:
                 days = req.num_days or 0
@@ -581,3 +588,26 @@ def dashboard(request):
                 context['leave_analytics_month'] = month_start.strftime('%B %Y')
 
     return render(request, 'core/dashboard.html', context)
+
+from core.models import MotivationalPost
+from core.forms import MotivationalPostForm
+
+@login_required
+def manage_motivational_post(request):
+    if request.user.role not in ('HR', 'SENIOR_HR', 'ADMIN', 'COO'):
+        messages.error(request, 'Access denied.')
+        return redirect('core:dashboard')
+
+    posts = MotivationalPost.objects.all()
+    if request.method == 'POST':
+        form = MotivationalPostForm(request.POST, request.FILES)
+        if form.is_valid():
+            post = form.save(commit=False)
+            post.uploaded_by = request.user
+            post.save()
+            messages.success(request, 'Motivational post uploaded successfully.')
+            return redirect('core:manage_motivational_post')
+    else:
+        form = MotivationalPostForm(initial={'is_active': True})
+
+    return render(request, 'core/manage_motivational_post.html', {'form': form, 'posts': posts})

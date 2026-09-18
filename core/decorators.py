@@ -35,6 +35,21 @@ def hr_only_required(view_func):
             return redirect('core:dashboard')
         return view_func(request, *args, **kwargs)
     return _wrapped
+def hr_admin_action_required(view_func):
+    """Real actions that HR *and* Admin can both perform (e.g. onboarding a
+    new employee) -- but NOT Managers/PM/GM, and NOT a hard view-only block
+    for Admin like hr_only_required applies. Use this instead of
+    hr_only_required when Admin should be allowed to act, not just view."""
+    @wraps(view_func)
+    @login_required
+    def _wrapped(request, *args, **kwargs):
+        if request.user.role not in ('HR', 'SENIOR_HR', 'ADMIN'):
+            messages.error(request, "You do not have permission to perform this action.")
+            return redirect('core:dashboard')
+        return view_func(request, *args, **kwargs)
+    return _wrapped
+
+
 def hr_admin_or_manager_required(view_func):
     """Extended-profile identity fields (enrollment ID, aadhar, bank
     details, references, etc.) are editable/viewable in detail by HR,
