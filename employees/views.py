@@ -533,7 +533,7 @@ def employee_directory(request):
         employees = employees.filter(id__in=list(team_ids))
     elif active_branch:
         # Everyone else sees the directory for the currently selected active branch (Admins and COOs are also visible everywhere)
-        employees = employees.filter(Q(branch=active_branch) | Q(role__in=['ADMIN', 'COO'])).distinct()
+        employees = employees.filter(Q(branch=active_branch) | Q(role__in=['ADMIN', 'COO', 'HR', 'SENIOR_HR'])).distinct()
     else:
         # Prevent users from seeing all data if they lack an active branch
         employees = User.objects.none()

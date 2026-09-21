@@ -135,11 +135,10 @@
     var selectedOpt = deptSelect.options[deptSelect.selectedIndex];
     var singleRoles = ['EMPLOYEE', 'MANAGER', 'PROJECT_MANAGER', 'GENERAL_MANAGER', 'CTO'];
     var deptDrivenRole = singleRoles.indexOf(roleSelect.value) !== -1;
-    // Show the manual Project field only when a department is picked
-    // and it has no default_project of its own to auto-assign from
-    // (e.g. Production, which spans several projects at once).
-    var needsProject = deptDrivenRole && selectedOpt && selectedOpt.value &&
-      selectedOpt.getAttribute('data-has-project') === '0';
+    
+    var isProduction = selectedOpt && selectedOpt.text && selectedOpt.text.toLowerCase().indexOf('production') !== -1;
+    
+    var needsProject = deptDrivenRole && selectedOpt && selectedOpt.value && isProduction;
     projectWrap.style.display = needsProject ? '' : 'none';
     if (!needsProject && projectSelect) projectSelect.value = '';
   }

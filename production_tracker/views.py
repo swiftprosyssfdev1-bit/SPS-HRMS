@@ -554,6 +554,7 @@ def tracker_dashboard(request):
     # QA Target: the QA Manager only.
     can_set_production_target = can_set_target and not is_qa_dept_manager
     can_set_qa_target = is_qa_dept_manager
+    can_export = request.user.role in ('MANAGER', 'PROJECT_MANAGER', 'GENERAL_MANAGER', 'CTO', 'HR', 'SENIOR_HR', 'ADMIN', 'COO')
     context = {
         'project_groups': list(project_groups.items()),
         'unassigned_rows': unassigned_rows,
@@ -563,6 +564,7 @@ def tracker_dashboard(request):
         'is_qa_dept_manager': is_qa_dept_manager,
         'can_set_production_target': can_set_production_target,
         'can_set_qa_target': can_set_qa_target,
+        'can_export': can_export,
     }
     return render(request, 'production_tracker/dashboard.html', context)
 
@@ -700,7 +702,7 @@ def set_target(request, user_id):
     return redirect(f"{reverse('production_tracker:dashboard')}?date={selected_date}")
 
 
-@role_required('MANAGER', 'PROJECT_MANAGER', 'HR', 'SENIOR_HR', 'ADMIN', 'COO')
+@role_required('MANAGER', 'PROJECT_MANAGER', 'GENERAL_MANAGER', 'CTO', 'HR', 'SENIOR_HR', 'ADMIN', 'COO')
 def export_tracker_excel(request):
     selected_date = _parse_date(request.GET.get('date'))
     month_start = selected_date.replace(day=1)

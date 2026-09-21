@@ -128,3 +128,22 @@ class User(AbstractUser):
 
     def __str__(self):
         return self.get_full_name() or self.username
+
+class MotivationalPost(models.Model):
+    title = models.CharField(max_length=200, blank=True)
+    image = models.ImageField(upload_to='motivational_posts/', null=True, blank=True)
+    quote = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    uploaded_by = models.ForeignKey('core.User', on_delete=models.SET_NULL, null=True, related_name='uploaded_posts')
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def save(self, *args, **kwargs):
+        if self.is_active:
+            MotivationalPost.objects.filter(is_active=True).update(is_active=False)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.title or 'Quote'} - {self.created_at.date()}"
