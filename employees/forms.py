@@ -133,7 +133,7 @@ class ProjectSelect(forms.Select):
         option = super().create_option(name, value, label, selected, index, subindex, attrs)
         if value:
             proj = Project.objects.filter(pk=value.value if hasattr(value, 'value') else value).select_related('manager__branch').first()
-            if proj and proj.manager_id and proj.manager.branch_id:
+            if proj and proj.manager_id and proj.manager and proj.manager.branch_id:
                 option['attrs']['data-branch'] = str(proj.manager.branch_id)
         return option
 
