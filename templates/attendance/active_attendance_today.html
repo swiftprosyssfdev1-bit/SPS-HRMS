@@ -19,7 +19,7 @@
       <td>{{ row.user.get_full_name|default:row.user.username }}</td>
       <td>{{ row.in_time|time:"h:i A"|default:"-" }}</td>
       <td>{{ row.out_time|time:"h:i A"|default:"-" }}</td>
-      <td>{{ row.total_hours }} / 8</td>
+      <td>{{ row.total_hours }} / 7.67</td>
       <td>
         {% if row.is_present %}
           <span class="badge badge-success">Present</span>

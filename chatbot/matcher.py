@@ -472,17 +472,28 @@ def _intent_greeting(user, text):
     if not _any_word(text, 'hi', 'hello', 'hey', 'good morning', 'good afternoon', 'good evening') \
        and text not in ('doubt', 'help', 'query', 'question'):
         return None
-    return (
-        "Hi! I can help with:\n"
-        "• Leave balance / status / taken (e.g. \"what's my leave balance\")\n"
-        "• Attendance & production (e.g. \"did I punch in today\", \"today's production\")\n"
-        "• Payslip, salary, allowances & bonus\n"
-        "• Increment status\n"
-        "• Overtime/Sunday & WFH request status\n"
-        "• Resignation status\n"
-        "• Your queries to HR/Manager\n"
-        "Just type your question and I'll try to help!"
-    )
+
+    lines = [
+        "Hi! I can help with:",
+        "• Leave balance / status / taken (e.g. \"what's my leave balance\")",
+        "• Attendance & production (e.g. \"did I punch in today\", \"today's production\")",
+        "• Payslip, salary, allowances & bonus",
+        "• Increment status & appraisals",
+        "• Overtime/Sunday & WFH request status",
+        "• Projects & your daily target",
+        "• Resignation status",
+        "• Letters (offer, experience, relieving...) & uploading your documents",
+        "• Today's motivational post",
+        "• Your queries to HR/Manager",
+    ]
+    if user.is_manager() or user.is_hr_or_admin() or user.is_coo():
+        lines.append("• Team leave, attendance & production (e.g. \"who is on leave today\")")
+    if user.role in ('HR', 'SENIOR_HR'):
+        lines.append("• Issuing letters, new joiners / exits, notice-period list, payroll & resignations")
+    if user.role in ('HR', 'SENIOR_HR', 'ADMIN', 'COO'):
+        lines.append("• Uploading / managing motivational posts")
+    lines.append("Just type your question and I'll try to help!")
+    return "\n".join(lines)
 
 
 def _intent_logout(user, text):
@@ -1530,6 +1541,185 @@ def _intent_who_am_i(user, text):
     return None
 
 
+# ---------------------------------------------------------------------------
+# Newer feature intents: motivational posts, HR letters, own documents,
+# joiners/exits, notice-period list. Permission rules mirror the real views
+# (core/views.py::manage_motivational_post, employees/views.py::my_letters,
+# issue_letter, upload_own_document, joiners_exits_list, notice_period_list).
+# ---------------------------------------------------------------------------
+
+def _safe_url(name):
+    try:
+        return reverse(name)
+    except NoReverseMatch:
+        return None
+
+
+def _intent_motivational_post(user, text):
+    if not (_any_word(text, 'motivational', 'motivation', 'motivational post', 'motivational posts',
+                      'motivational quote', 'motivation post', 'daily quote', 'quote of the day',
+                      'inspirational quote', 'todays quote', "today's quote")
+            or _fuzzy_word(text, 'motivational', 0.85)):
+        return None
+
+    can_manage = user.role in ('HR', 'SENIOR_HR', 'ADMIN', 'COO')
+    manage_url = _safe_url('core:manage_motivational_post')
+    wants_manage = _any_word(text, 'upload', 'add', 'create', 'post a', 'publish', 'change', 'update',
+                             'manage', 'remove', 'delete', 'new')
+
+    if wants_manage:
+        if not can_manage:
+            return (
+                "Motivational posts are uploaded by HR, Admin or the COO. "
+                "You'll see the current post as a pop-up on your dashboard. "
+                "If you'd like to suggest one, please raise a query to HR."
+            )
+        msg = (
+            "To upload or manage motivational posts:\n"
+            "1. Open **Motivational Posts** from the left sidebar\n"
+            "2. Add a title, an image and/or a quote\n"
+            "3. Keep **Active** ticked and click save\n\n"
+            "Note: only ONE post is active at a time — activating a new post automatically "
+            "deactivates the previous one."
+        )
+        if manage_url:
+            msg += f"\n\nDirect link: {manage_url}"
+        return msg
+
+    from core.models import MotivationalPost
+    post = MotivationalPost.objects.filter(is_active=True).first()
+    if post:
+        parts = ["Here's today's motivational post:"]
+        if post.title:
+            parts.append(f"**{post.title}**")
+        if post.quote:
+            parts.append(f"\"{post.quote}\"")
+        if post.image:
+            try:
+                parts.append(f"🖼️ [View the poster]({post.image.url})")
+            except ValueError:
+                pass
+        parts.append("It also appears as a pop-up on your dashboard once a day.")
+        reply = "\n\n".join(parts)
+    else:
+        reply = (
+            "There's no active motivational post right now. When HR uploads one, "
+            "it will appear as a pop-up on your dashboard."
+        )
+    if can_manage and manage_url:
+        reply += f"\n\nYou can upload or change posts here: {manage_url}"
+    return reply
+
+
+def _intent_letters(user, text):
+    if not _any_word(text, 'letter', 'letters', 'offer letter', 'appointment letter', 'experience letter',
+                     'relieving letter', 'promotion letter', 'increment letter', 'experience certificate'):
+        return None
+    # Don't hijack leave-related wording like "leave letter" / "resignation letter".
+    if _any_word(text, 'leave letter', 'resignation letter', 'resign letter', 'permission letter'):
+        return None
+
+    my_url = _safe_url('employees:my_letters')
+    issue_url = _safe_url('employees:issue_letter')
+    wants_issue = _any_word(text, 'issue', 'send', 'give', 'generate', 'upload', 'create')
+
+    if user.role in ('HR', 'SENIOR_HR') and wants_issue:
+        msg = (
+            "To issue a letter:\n"
+            "1. Open **Issue Letter** in the Employees section\n"
+            "2. Choose the letter type (Offer, Appointment, Company Experience, Promotion, "
+            "Relieving or Increment Letter)\n"
+            "3. Tick one or more employees\n"
+            "4. Upload the file and submit\n\n"
+            "Each employee gets their own copy on their **My Letters** page."
+        )
+        if issue_url:
+            msg += f"\n\nDirect link: {issue_url}"
+        return msg
+
+    if wants_issue:
+        if user.role == 'ADMIN':
+            return "Admin has view-only access — only HR can issue letters."
+        return "Only HR can issue letters. You can view letters issued to you under My Letters."
+
+    try:
+        from employees.models import EmployeeDocument
+        letters = list(user.documents.filter(
+            doc_type__in=EmployeeDocument.HR_DOC_TYPES).order_by('-uploaded_at')[:5])
+        unread = user.documents.filter(
+            doc_type__in=EmployeeDocument.HR_DOC_TYPES, viewed_by_employee=False).count()
+    except Exception:
+        letters, unread = [], 0
+
+    if letters:
+        lines = [f"You have {len(letters)}{'+' if len(letters) == 5 else ''} letter(s) issued by HR:"]
+        for d in letters:
+            lines.append(f"• {d.get_doc_type_display()} — {d.uploaded_at.strftime('%d %b %Y')}")
+        if unread:
+            lines.append(f"\n🔔 {unread} new letter(s) you haven't opened yet.")
+        reply = "\n".join(lines)
+    else:
+        reply = "No letters have been issued to you by HR yet."
+    if my_url:
+        reply += f"\n\nView and download them under My Letters: {my_url}"
+    if user.role in ('HR', 'SENIOR_HR') and issue_url:
+        reply += f"\nTo issue a letter to an employee: {issue_url}"
+    return reply
+
+
+def _intent_my_documents(user, text):
+    if not _any_word(text, 'upload document', 'upload my document', 'upload documents', 'my documents',
+                     'upload aadhar', 'upload aadhaar', 'upload pan', 'upload degree',
+                     'upload id proof', 'upload certificate', 'add document', 'add my document'):
+        return None
+    url = _safe_url('employees:edit_my_profile')
+    msg = (
+        "You upload your own documents from **Edit Profile**:\n"
+        "1. Open **My Profile** and click **Edit Profile**\n"
+        "2. Choose the document type (Degree, PAN Card, Aadhar Card, ID Proof, "
+        "Previous Experience or Other) and pick the file\n"
+        "3. Upload it — it will then be listed under **My Documents** on your profile, "
+        "where you can also download or delete it\n\n"
+        "HR cannot upload these personal documents on your behalf. "
+        "Official letters issued by HR (offer, experience, etc.) appear separately under My Letters."
+    )
+    if url:
+        msg += f"\n\nDirect link: {url}"
+    return msg
+
+
+def _intent_joiners_exits(user, text):
+    if not _any_word(text, 'new joiners', 'new joinee', 'new joinees', 'joiners', 'joiners and exits',
+                     'joiners list', 'exited employees', 'exit list', 'recent exits', 'recent joiners',
+                     'employees who left', 'who left'):
+        return None
+    if user.role not in ('HR', 'SENIOR_HR', 'ADMIN', 'COO'):
+        return "That list is only available to HR, Admin and COO."
+    url = _safe_url('employees:joiners_exits')
+    if not url:
+        return None
+    wants_exits = _any_word(text, 'exited', 'exit', 'exits', 'left', 'who left')
+    list_type = 'exited' if wants_exits else 'joiners'
+    label = 'Exited Employees' if wants_exits else 'New Joiners'
+    return (
+        f"You can see **{label}** (filter by month) on the Joiners & Exits page. "
+        f"Direct link: {url}?type={list_type}\n"
+        "Use the dropdown and month picker on that page to switch between New Joiners / Exited Employees and change the month."
+    )
+
+
+def _intent_notice_period_list(user, text):
+    if not _any_word(text, 'notice period list', 'employees serving notice', 'serving notice',
+                     'notice period employees', 'exited resignation list'):
+        return None
+    if user.role not in ('HR', 'SENIOR_HR'):
+        return "The notice-period list is only available to HR."
+    url = _safe_url('employees:notice_period_list')
+    if not url:
+        return None
+    return f"You can find that under Notice Period. Direct link: {url}"
+
+
 DYNAMIC_INTENTS = [
     # === SECURITY FIREWALL — always runs first ===
     _intent_security_block,
@@ -1537,6 +1727,13 @@ DYNAMIC_INTENTS = [
     # Bot identity — runs early so it doesn't fall through to RAG
     _intent_bot_identity,
     _intent_role_capabilities,
+
+    # Newer features — specific phrases only, so safe to run early
+    _intent_motivational_post,
+    _intent_letters,
+    _intent_my_documents,
+    _intent_joiners_exits,
+    _intent_notice_period_list,
 
     # Live, role-aware queries first
     _intent_my_profile_live,

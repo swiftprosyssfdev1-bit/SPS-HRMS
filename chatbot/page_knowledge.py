@@ -564,6 +564,46 @@ EMPLOYEES = {
 }
 
 
+
+# ---------------------------------------------------------------------------
+# FEATURE: Motivational Posts  (app: core)
+# nav key: 'motivational_posts'
+# source: core/urls.py, core/views.py::manage_motivational_post,
+#         core/models.py::MotivationalPost,
+#         templates/core/manage_motivational_post.html,
+#         templates/components/motivational_modal.html
+# ---------------------------------------------------------------------------
+
+MOTIVATIONAL = {
+    'feature': 'Motivational Posts',
+    'app': 'core',
+    'nav_key': 'motivational_posts',
+
+    'pages': {
+        'manage_motivational_post': {
+            'label': 'Motivational Posts',
+            'route': 'core:manage_motivational_post',
+            'template': 'core/manage_motivational_post.html',
+            'source': 'core/views.py::manage_motivational_post',
+            'purpose': (
+                "HR, Admin and COO upload the motivational post (title, image and/or quote) "
+                "that employees see as a pop-up on their dashboard."
+            ),
+            'who_can_submit': (
+                "Role must be HR, SENIOR_HR, ADMIN or COO. Everyone else is redirected to the "
+                "dashboard with 'Access denied.'"
+            ),
+            'form_fields': ['title (optional)', 'image (optional)', 'quote (optional)', 'is_active'],
+            'extra_rules': [
+                'Only ONE post can be active at a time — saving an active post automatically deactivates the previous active one.',
+                'Employees do not manage posts; they only see the currently active post as a pop-up on the dashboard (and COO dashboard).',
+                'The pop-up is shown once per day per user — closing it hides that same post until the next day.',
+            ],
+            'displays': ['Upload form', 'List of all posts (newest first)'],
+        },
+    },
+}
+
 # ---------------------------------------------------------------------------
 # Registry so matcher.py can look up a feature's page knowledge by nav_key
 # without importing every feature module directly.
@@ -573,6 +613,7 @@ PAGE_KNOWLEDGE_REGISTRY = {
     'attendance': ATTENDANCE,
     'leaves': LEAVES,
     'employees': EMPLOYEES,
+    'motivational_posts': MOTIVATIONAL,
 }
 
 

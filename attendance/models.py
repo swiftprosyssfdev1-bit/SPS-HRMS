@@ -1,7 +1,19 @@
 from datetime import datetime, time, date, timedelta
 from django.db import models
 from django.conf import settings
+from decimal import Decimal
 from django.utils import timezone as dj_timezone
+
+# ---- Daily working-hours rule ----------------------------------------
+# Shift is 8:00 hrs gross, of which 20 mins is the (auto) break, so every
+# employee's standard net working day is 7:40 hrs.
+#   - At least MIN_BREAK_MINUTES is always deducted from a punched day
+#     (if the employee logs a longer break, the longer one is used).
+#   - Net >= FULL_DAY_HOURS            -> full day
+#   - HALF_DAY_MIN_HOURS <= net < FULL -> half day
+MIN_BREAK_MINUTES = 20
+FULL_DAY_HOURS = Decimal('7.67')       # 7h 40m
+HALF_DAY_MIN_HOURS = Decimal('3.83')   # 3h 50m (half of 7h 40m)
 
 SHIFT_START = time(9, 0)  # 9:30 AM shift start used for late detection
 NIGHT_START = time(22, 0)  # 10:00 PM
@@ -38,8 +50,11 @@ class AttendanceRecord(models.Model):
     def save(self, *args, **kwargs):
         if self.in_time and self.out_time:
             delta = self.out_time - self.in_time
-            worked_seconds = delta.total_seconds() - (self.total_break_minutes * 60)
-            self.total_hours = round(max(worked_seconds, 0) / 3600, 2)
+            # Always deduct the standard 20-min break; if the employee's
+            # logged break is longer, deduct that instead.
+            effective_break = max(self.total_break_minutes, MIN_BREAK_MINUTES)
+            worked_seconds = delta.total_seconds() - (effective_break * 60)
+            self.total_hours = Decimal(str(round(max(worked_seconds, 0) / 3600, 2)))
         if self.in_time:
             shift_start_dt = datetime.combine(self.date, SHIFT_START)
             in_time_local = dj_timezone.localtime(self.in_time).replace(tzinfo=None)
@@ -57,6 +72,21 @@ class AttendanceRecord(models.Model):
         self.is_night_duty = _falls_in_night_window(in_t) or _falls_in_night_window(out_t)
 
         super().save(*args, **kwargs)
+
+    @property
+    def day_status(self):
+        """'OPEN' (not punched out yet), 'FULL', 'HALF' or 'SHORT'
+        (worked less than a half day) based on net hours after break."""
+        if not self.in_time:
+            return 'ABSENT'
+        if not self.out_time:
+            return 'OPEN'
+        hours = Decimal(str(self.total_hours))
+        if hours >= FULL_DAY_HOURS:
+            return 'FULL'
+        if hours >= HALF_DAY_MIN_HOURS:
+            return 'HALF'
+        return 'SHORT'
 
     @property
     def payroll_cycle_label(self):

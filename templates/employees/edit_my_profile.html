@@ -45,6 +45,10 @@
       <div><label>Qualification</label>{{ form.qualification }}</div>
       <div><label>Previous Experience</label>{{ form.previous_experience }}</div>
       <div><label>Experience (Current Company)</label>{{ form.current_company_experience }}</div>
+      {% if form.shift %}
+      <div><label>Shift</label>{{ form.shift }}</div>
+      <div><label>Type</label>{{ form.work_type }}</div>
+      {% endif %}
     </div>
     <label>Address</label>
     {{ form.address }}

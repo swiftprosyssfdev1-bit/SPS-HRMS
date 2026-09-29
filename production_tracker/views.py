@@ -383,7 +383,7 @@ def tracker_dashboard(request):
 
     if is_hr_admin:
         from django.db.models import Q
-        base_employees = User.objects.filter(role='EMPLOYEE', profile__status='ACTIVE')
+        base_employees = User.objects.filter(role='EMPLOYEE', profile__status__in=['ACTIVE', 'ONBOARDING'])
         if not (request.user.role == 'ADMIN' or getattr(request.user, 'can_access_all_branches', False)):
             base_employees = base_employees.filter(branch=request.user.branch)
 
@@ -429,7 +429,7 @@ def tracker_dashboard(request):
             ).distinct()
 
         qa_employees = User.objects.filter(
-            role='EMPLOYEE', department=request.user.department, profile__status='ACTIVE'
+            role='EMPLOYEE', department=request.user.department, profile__status__in=['ACTIVE', 'ONBOARDING']
         )
         if not getattr(request.user, 'can_access_all_branches', False):
             qa_employees = qa_employees.filter(branch=request.user.branch)
@@ -458,7 +458,7 @@ def tracker_dashboard(request):
         
         assignments = ProjectAssignment.objects.filter(
             project_id__in=managed_ids, is_current=True, user__role='EMPLOYEE',
-            user__profile__status='ACTIVE'
+            user__profile__status__in=['ACTIVE', 'ONBOARDING']
         ).exclude(project__status='COMPLETED').select_related('project', 'user')
         if not getattr(request.user, 'can_access_all_branches', False):
             assignments = assignments.filter(user__branch=request.user.branch)
@@ -470,14 +470,14 @@ def tracker_dashboard(request):
         submitted_ids = set(
             DailyProduction.objects.filter(
                 project_id__in=managed_ids, date=selected_date,
-                employee__role='EMPLOYEE', employee__profile__status='ACTIVE'
+                employee__role='EMPLOYEE', employee__profile__status__in=['ACTIVE', 'ONBOARDING']
             ).values_list('employee_id', flat=True)
         )
         employees = User.objects.filter(id__in=(assigned_ids | submitted_ids))
     else:
         assignments = ProjectAssignment.objects.filter(
             project__in=led_projects, is_current=True, user__role='EMPLOYEE',
-            user__profile__status='ACTIVE'
+            user__profile__status__in=['ACTIVE', 'ONBOARDING']
         ).exclude(project__status='COMPLETED').select_related('project', 'user')
         employees = User.objects.filter(id__in=assignments.values_list('user_id', flat=True))
 
@@ -723,7 +723,7 @@ def export_tracker_excel(request):
     is_ops_manager = request.user.role in ('MANAGER', 'PROJECT_MANAGER') and not is_qa_dept_manager
 
     base_employees = User.objects.filter(
-        role='EMPLOYEE', profile__status='ACTIVE'
+        role='EMPLOYEE', profile__status__in=['ACTIVE', 'ONBOARDING']
     ).exclude(id__in=_tl_pl_user_ids())
     if not (request.user.role == 'ADMIN' or getattr(request.user, 'can_access_all_branches', False)):
         base_employees = base_employees.filter(branch=request.user.branch)

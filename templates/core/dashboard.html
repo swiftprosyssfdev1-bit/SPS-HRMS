@@ -13,8 +13,11 @@
       {% csrf_token %}
       <input type="hidden" name="next" value="{{ request.path }}">
       <select name="branch_id" class="form-control" style="margin:0; min-width:200px;" onchange="this.form.submit()">
+        {% if user.role == 'SENIOR_HR' %}
+        <option value="all" {% if show_all_branches %}selected{% endif %}>All Branches</option>
+        {% endif %}
         {% for b in all_branches %}
-        <option value="{{ b.id }}" {% if active_branch.id == b.id %}selected{% endif %}>{{ b.name }} ({{ b.code }})</option>
+        <option value="{{ b.id }}" {% if active_branch.id == b.id and not show_all_branches %}selected{% endif %}>{{ b.name }} ({{ b.code }})</option>
         {% endfor %}
       </select>
     </form>
@@ -175,15 +178,19 @@
 <h3 style="margin:24px 0 12px;">Today</h3>
 <div class="stat-grid">
   <div class="stat-card"><div class="stat-value">{{ present_today }}</div><div class="stat-label">Present Today</div></div>
+  <div class="stat-card"><div class="stat-value">{{ half_today }}</div><div class="stat-label">Half Day Today</div></div>
   <div class="stat-card orange"><div class="stat-value">{{ absent_today }}</div><div class="stat-label">Absent Today</div></div>
-  <div class="stat-card"><div class="stat-value">{{ on_leave_today }}</div><div class="stat-label">On Leave (With Permission)</div></div>
+  <div class="stat-card"><div class="stat-value">{{ on_leave_today }}</div><div class="stat-label">On Leave Today</div></div>
+  <div class="stat-card"><div class="stat-value">{{ permission_today }}</div><div class="stat-label">Permission Today</div></div>
 </div>
 
 <h3 style="margin:24px 0 12px;">This Month</h3>
 <div class="stat-grid">
   <div class="stat-card"><div class="stat-value">{{ present_month }}</div><div class="stat-label">Present (Month to Date)</div></div>
+  <div class="stat-card"><div class="stat-value">{{ half_month }}</div><div class="stat-label">Half Day (Month to Date)</div></div>
   <div class="stat-card orange"><div class="stat-value">{{ absent_month }}</div><div class="stat-label">Absent (Month to Date)</div></div>
   <div class="stat-card"><div class="stat-value">{{ on_leave_month }}</div><div class="stat-label">On Leave (Month to Date)</div></div>
+  <div class="stat-card"><div class="stat-value">{{ permission_month }}</div><div class="stat-label">Permission (Month to Date)</div></div>
 </div>
 <div class="stat-grid">
   <div class="stat-card">
@@ -197,6 +204,76 @@
     <a href="{% url 'employees:joiners_exits' %}?type=exited&month={{ current_month }}" style="display:inline-block; margin-top:8px; font-size:0.78rem; color:var(--electric-blue); font-weight:600; text-decoration:none;">View details &rarr;</a>
   </div>
 </div>
+{% if show_all_branches %}
+<h3 style="margin:24px 0 12px;">Today — Branch-wise Details</h3>
+<div class="card" style="overflow-x:auto;">
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Branch</th>
+        <th>Employees</th>
+        <th>Present</th>
+        <th>Half Day</th>
+        <th>Absent</th>
+        <th>On Leave</th>
+        <th>Permission</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in branch_rows %}
+      <tr>
+        <td>{{ row.branch.name }} ({{ row.branch.code }})</td>
+        <td>{{ row.active_employees }}</td>
+        <td>{{ row.today.present }} <span style="color:#888; font-size:0.78rem;">({{ row.today.present_pct }}%)</span></td><td>{{ row.today.half }} <span style="color:#888; font-size:0.78rem;">({{ row.today.half_pct }}%)</span></td><td>{{ row.today.absent }} <span style="color:#888; font-size:0.78rem;">({{ row.today.absent_pct }}%)</span></td><td>{{ row.today.leave }} <span style="color:#888; font-size:0.78rem;">({{ row.today.leave_pct }}%)</span></td><td>{{ row.today.permission }} <span style="color:#888; font-size:0.78rem;">({{ row.today.permission_pct }}%)</span></td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="7">No branches found.</td></tr>
+      {% endfor %}
+      <tr style="background:#f6f7f9;">
+        <td><strong>All Branches</strong></td>
+        <td><strong>{{ active_employees }}</strong></td>
+        <td><strong>{{ overall_today.present }}</strong> <span style="color:#888; font-size:0.78rem;">({{ overall_today.present_pct }}%)</span></td><td><strong>{{ overall_today.half }}</strong> <span style="color:#888; font-size:0.78rem;">({{ overall_today.half_pct }}%)</span></td><td><strong>{{ overall_today.absent }}</strong> <span style="color:#888; font-size:0.78rem;">({{ overall_today.absent_pct }}%)</span></td><td><strong>{{ overall_today.leave }}</strong> <span style="color:#888; font-size:0.78rem;">({{ overall_today.leave_pct }}%)</span></td><td><strong>{{ overall_today.permission }}</strong> <span style="color:#888; font-size:0.78rem;">({{ overall_today.permission_pct }}%)</span></td>
+      </tr>
+    </tbody>
+  </table>
+  <p style="font-size:0.78rem; color:#888; margin:10px 0 0;">Percentages are of each branch's active headcount. Half Day is included in Present.</p>
+</div>
+
+<h3 style="margin:24px 0 12px;">This Month — Branch-wise Details</h3>
+<div class="card" style="overflow-x:auto;">
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Branch</th>
+        <th>Employees</th>
+        <th>Present</th>
+        <th>Half Day</th>
+        <th>Absent</th>
+        <th>On Leave</th>
+        <th>Permission</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in branch_rows %}
+      <tr>
+        <td>{{ row.branch.name }} ({{ row.branch.code }})</td>
+        <td>{{ row.active_employees }}</td>
+        <td>{{ row.month.present }} <span style="color:#888; font-size:0.78rem;">({{ row.month.present_pct }}%)</span></td><td>{{ row.month.half }} <span style="color:#888; font-size:0.78rem;">({{ row.month.half_pct }}%)</span></td><td>{{ row.month.absent }} <span style="color:#888; font-size:0.78rem;">({{ row.month.absent_pct }}%)</span></td><td>{{ row.month.leave }} <span style="color:#888; font-size:0.78rem;">({{ row.month.leave_pct }}%)</span></td><td>{{ row.month.permission }} <span style="color:#888; font-size:0.78rem;">({{ row.month.permission_pct }}%)</span></td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="7">No branches found.</td></tr>
+      {% endfor %}
+      <tr style="background:#f6f7f9;">
+        <td><strong>All Branches</strong></td>
+        <td><strong>{{ active_employees }}</strong></td>
+        <td><strong>{{ overall_month.present }}</strong> <span style="color:#888; font-size:0.78rem;">({{ overall_month.present_pct }}%)</span></td><td><strong>{{ overall_month.half }}</strong> <span style="color:#888; font-size:0.78rem;">({{ overall_month.half_pct }}%)</span></td><td><strong>{{ overall_month.absent }}</strong> <span style="color:#888; font-size:0.78rem;">({{ overall_month.absent_pct }}%)</span></td><td><strong>{{ overall_month.leave }}</strong> <span style="color:#888; font-size:0.78rem;">({{ overall_month.leave_pct }}%)</span></td><td><strong>{{ overall_month.permission }}</strong> <span style="color:#888; font-size:0.78rem;">({{ overall_month.permission_pct }}%)</span></td>
+      </tr>
+    </tbody>
+  </table>
+  <p style="font-size:0.78rem; color:#888; margin:10px 0 0;">Percentages are of employee-days (present + absent + on leave) month to date. Half Day is included in Present.</p>
+</div>
+{% endif %}
+
 <div class="card">
   <h3>Your Attendance Today</h3>
   {% if today_record and today_record.in_time %}

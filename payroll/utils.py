@@ -4,7 +4,8 @@ from attendance.models import AttendanceRecord
 from payroll.models import SalaryStructure, Payslip
 from attendance.utils import compute_authorized_hours_for_range, build_payroll_cycle_summary
 
-STANDARD_DAILY_HOURS = Decimal('8')
+# Standard net day = 7h 40m (8h shift minus 20-min break), same as attendance
+from attendance.models import FULL_DAY_HOURS as STANDARD_DAILY_HOURS
 
 _ONES = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine',
          'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen',
