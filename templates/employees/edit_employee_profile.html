@@ -116,8 +116,10 @@
       <div><label>Previous Experience</label>{{ identity_form.previous_experience }}</div>
       <div><label>Experience (Current Company)</label>{{ identity_form.current_company_experience }}</div>
       <div><label>Employment Status</label>{{ identity_form.employment_status }}</div>
+      {% if identity_form.shift %}
       <div><label>Shift</label>{{ identity_form.shift }}</div>
       <div><label>Type</label>{{ identity_form.work_type }}</div>
+      {% endif %}
     </div>
     <div style="display:flex; gap:24px; margin:6px 0 14px; flex-wrap:wrap;">
       <label style="display:flex; align-items:center; gap:8px; font-weight:600; margin:0;">{{ identity_form.is_pf_applicable }} PF Applicable</label>

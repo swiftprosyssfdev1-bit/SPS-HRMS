@@ -12,7 +12,8 @@ from django.utils import timezone as dj_timezone
 from attendance.models import AttendanceRecord, MonthlyAttendanceSheet, OvertimePermission
 
 
-STANDARD_DAILY_HOURS_CAP = Decimal('8.00')
+# Standard net day = 7h 40m (8h shift minus 20-min break) -- see attendance.models
+from attendance.models import FULL_DAY_HOURS as STANDARD_DAILY_HOURS_CAP
 
 
 def normalize_year_month(year, month):

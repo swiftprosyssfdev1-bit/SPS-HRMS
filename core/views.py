@@ -14,7 +14,7 @@ from core.utils import user_can_switch_branch, get_manager_team, get_gm_scope
 from core.models import Branch, User
 
 
-def _month_to_date_absent_days(user_ids, branch, month_start, end_date):
+def _month_to_date_absent_days(user_ids, branch, month_start, end_date, on_leave_pairs=None):
     """Join-date-aware, Sunday-excluded month-to-date Absent count.
 
     For each employee, only counts days from max(month_start, their own
@@ -43,13 +43,16 @@ def _month_to_date_absent_days(user_ids, branch, month_start, end_date):
         ).values_list('user_id', 'date')
     )
 
-    on_leave_pairs = set()
-    day = month_start
-    while day <= end_date:
-        for r in approved_on_leave_for_date(day, branch):
-            if r.user_id in user_ids:
-                on_leave_pairs.add((r.user_id, day))
-        day += timedelta(days=1)
+    # Callers that already computed the (user_id, day) leave/permission
+    # pairs can pass them in to skip the per-day query loop.
+    if on_leave_pairs is None:
+        on_leave_pairs = set()
+        day = month_start
+        while day <= end_date:
+            for r in approved_on_leave_for_date(day, branch):
+                if r.user_id in user_ids:
+                    on_leave_pairs.add((r.user_id, day))
+            day += timedelta(days=1)
 
     absent_count = 0
     for uid in user_ids:
@@ -68,6 +71,121 @@ def _month_to_date_absent_days(user_ids, branch, month_start, end_date):
             day += timedelta(days=1)
 
     return absent_count
+
+
+def _pct(part, whole):
+    """Percentage rounded to 1 decimal; 0 when there is nothing to divide by."""
+    return round(part * 100.0 / whole, 1) if whole else 0
+
+
+def _absence_pairs(user_ids, month_start, end_date):
+    """One query -> ({(user_id, day)} on approved LEAVE, {(user_id, day)}
+    on approved PERMISSION) inside [month_start, end_date]. WFH is never
+    counted. Same rule as leaves.utils.approved_on_leave_for_date: a
+    permission whose end time has already passed today no longer counts
+    as \"currently away\"."""
+    from leaves.models import LeaveRequest
+    from django.db.models import Q
+
+    leave_pairs, perm_pairs = set(), set()
+    if not user_ids:
+        return leave_pairs, perm_pairs
+
+    today = timezone.localdate()
+    now_time = timezone.localtime().time()
+    qs = LeaveRequest.objects.filter(status='APPROVED', user_id__in=user_ids).filter(
+        Q(request_type='LEAVE', start_date__lte=end_date, end_date__gte=month_start) |
+        Q(request_type='PERMISSION', permission_date__gte=month_start, permission_date__lte=end_date)
+    )
+    for r in qs:
+        if r.request_type == 'PERMISSION':
+            d = r.permission_date
+            if not d:
+                continue
+            if d == today and r.to_time and now_time > r.to_time:
+                continue
+            perm_pairs.add((r.user_id, d))
+        else:
+            if not r.start_date or not r.end_date:
+                continue
+            day = max(r.start_date, month_start)
+            last = min(r.end_date, end_date)
+            while day <= last:
+                leave_pairs.add((r.user_id, day))
+                day += timedelta(days=1)
+    return leave_pairs, perm_pairs
+
+
+def _attendance_snapshot(user_ids, branch, month_start, today):
+    """Today + month-to-date attendance numbers (with percentages) for a
+    set of employees. Present counts anyone who punched in; Half Day is
+    the subset of those who punched out with 3:50 <= net hours < 7:40
+    (see attendance.models); Leave and Permission are approved requests
+    only. Absent keeps the existing rule: not present and not on
+    approved leave/permission (join-date aware, Sundays excluded for the
+    month figure)."""
+    from attendance.models import FULL_DAY_HOURS, HALF_DAY_MIN_HOURS
+
+    user_ids = set(user_ids)
+    total = len(user_ids)
+    zero = {'present': 0, 'half': 0, 'absent': 0, 'leave': 0, 'permission': 0,
+            'present_pct': 0, 'half_pct': 0, 'absent_pct': 0, 'leave_pct': 0, 'permission_pct': 0}
+    if not total:
+        return {'total': 0, 'today': dict(zero), 'month': dict(zero)}
+
+    records = AttendanceRecord.objects.filter(
+        user_id__in=user_ids, date__gte=month_start, date__lte=today, in_time__isnull=False
+    )
+    half_qs = records.filter(
+        out_time__isnull=False, total_hours__gte=HALF_DAY_MIN_HOURS, total_hours__lt=FULL_DAY_HOURS
+    )
+    present_today = records.filter(date=today).count()
+    present_month = records.count()
+    half_today = half_qs.filter(date=today).count()
+    half_month = half_qs.count()
+
+    leave_pairs, perm_pairs = _absence_pairs(user_ids, month_start, today)
+    leave_today = sum(1 for _, d in leave_pairs if d == today)
+    perm_today = sum(1 for _, d in perm_pairs if d == today)
+    leave_month, perm_month = len(leave_pairs), len(perm_pairs)
+
+    absent_today = max(0, total - present_today - leave_today - perm_today)
+    absent_month = _month_to_date_absent_days(
+        user_ids, branch, month_start, today, on_leave_pairs=leave_pairs | perm_pairs
+    )
+
+    def build(present, half, absent, leave, perm, whole):
+        return {
+            'present': present, 'half': half, 'absent': absent, 'leave': leave, 'permission': perm,
+            'present_pct': _pct(present, whole), 'half_pct': _pct(half, whole),
+            'absent_pct': _pct(absent, whole), 'leave_pct': _pct(leave, whole),
+            'permission_pct': _pct(perm, whole),
+        }
+
+    # Today: percentage of headcount. Month: percentage of employee-days
+    # (present + absent + on leave) since those are person-days, not people.
+    month_whole = present_month + absent_month + leave_month
+    return {
+        'total': total,
+        'today': build(present_today, half_today, absent_today, leave_today, perm_today, total),
+        'month': build(present_month, half_month, absent_month, leave_month, perm_month, month_whole),
+    }
+
+
+def _sum_snapshots(snaps):
+    """Combine several _attendance_snapshot results (one per branch) into
+    one company-wide snapshot whose numbers are exactly the sum of the
+    branch rows, with percentages recomputed on the combined totals."""
+    keys = ('present', 'half', 'absent', 'leave', 'permission')
+    total = sum(sn['total'] for sn in snaps)
+    out = {'total': total}
+    for period in ('today', 'month'):
+        agg = {k: sum(sn[period][k] for sn in snaps) for k in keys}
+        whole = total if period == 'today' else agg['present'] + agg['absent'] + agg['leave']
+        for k in keys:
+            agg[k + '_pct'] = _pct(agg[k], whole)
+        out[period] = agg
+    return out
 
 
 def _build_approver_lookup():
@@ -257,7 +375,17 @@ def set_active_branch(request):
             messages.error(request, "You do not have permission to switch branches.")
             return redirect('core:dashboard')
         branch_id = request.POST.get('branch_id')
+        if branch_id == 'all':
+            # "All Branches" is a dashboard-only view for GM (HR); it does
+            # not change the active branch used by the other pages.
+            if user.role == 'SENIOR_HR':
+                request.session['dashboard_all_branches'] = True
+                messages.success(request, "You are now viewing All Branches.")
+            else:
+                messages.error(request, "You don't have access to that view.")
+            return redirect(request.POST.get('next') or 'core:dashboard')
         if branch_id:
+            request.session.pop('dashboard_all_branches', None)
             if user.role in ('ADMIN', 'SENIOR_HR', 'COO') or getattr(user, 'can_access_all_branches', False):
                 allowed = Branch.objects.all()
             else:
@@ -290,6 +418,7 @@ def dashboard(request):
         pass
 
     active_branch = getattr(request, 'active_branch', None)
+    context['show_all_branches'] = False
 
     if user.role == 'ADMIN':
         base_qs = EmployeeProfile.objects.select_related('user')
@@ -433,11 +562,16 @@ def dashboard(request):
             context['use_single_leave_category'] = False
 
     elif user.role in ('HR', 'SENIOR_HR'):
-        from leaves.utils import approved_on_leave_today, approved_on_leave_for_date
+        # GM (HR) can pick "All Branches" in the dropdown: every card below
+        # is then company-wide (stats_branch=None) and a branch-wise
+        # breakdown table is added. Plain HR always stays on their branch.
+        show_all = user.role == 'SENIOR_HR' and bool(request.session.get('dashboard_all_branches'))
+        stats_branch = None if show_all else active_branch
+        context['show_all_branches'] = show_all
 
         base_qs = EmployeeProfile.objects.exclude(user__role__in=['HR', 'SENIOR_HR', 'ADMIN'])
-        if active_branch:
-            base_qs = base_qs.filter(user__branch=active_branch)
+        if stats_branch:
+            base_qs = base_qs.filter(user__branch=stats_branch)
 
         context['total_employees'] = base_qs.count()
         active_profiles = base_qs.filter(status='ACTIVE')
@@ -445,41 +579,49 @@ def dashboard(request):
         context['inactive_employees'] = context['total_employees'] - context['active_employees']
 
         active_user_ids = set(active_profiles.values_list('user_id', flat=True))
-
-        present_today_count = AttendanceRecord.objects.filter(
-            date=today, in_time__isnull=False, user_id__in=active_user_ids
-        ).values('user_id').distinct().count()
-
-        on_leave_today_count = sum(
-            1 for r in approved_on_leave_today(active_branch) if r.user_id in active_user_ids
-        )
-
-        context['present_today'] = present_today_count
-        context['on_leave_today'] = on_leave_today_count
-        context['absent_today'] = max(0, context['active_employees'] - present_today_count - on_leave_today_count)
-
         month_start = today.replace(day=1)
 
-        # ---- Monthly present / absent / on-leave totals (month-to-date) ----
-        present_month_count = AttendanceRecord.objects.filter(
-            date__gte=month_start, date__lte=today, in_time__isnull=False, user_id__in=active_user_ids
-        ).values('user_id', 'date').distinct().count()
+        if show_all:
+            # Branch-wise rows first; the company-wide cards and the
+            # "All Branches" total row are the exact sum of these rows.
+            branch_rows, branch_snaps = [], []
+            for branch in Branch.objects.all().order_by('code'):
+                b_base = EmployeeProfile.objects.exclude(
+                    user__role__in=['HR', 'SENIOR_HR', 'ADMIN']
+                ).filter(user__branch=branch)
+                b_active_ids = set(b_base.filter(status='ACTIVE').values_list('user_id', flat=True))
+                b_snap = _attendance_snapshot(b_active_ids, branch, month_start, today)
+                branch_snaps.append(b_snap)
+                branch_rows.append({
+                    'branch': branch,
+                    'total_employees': b_base.count(),
+                    'active_employees': len(b_active_ids),
+                    'today': b_snap['today'],
+                    'month': b_snap['month'],
+                    'new_joiners': b_base.filter(
+                        user__date_joined_company__gte=month_start, user__date_joined_company__lte=today
+                    ).count(),
+                    'exited': b_base.filter(
+                        status='EXITED', exit_date__gte=month_start, exit_date__lte=today
+                    ).count(),
+                })
+            snap = _sum_snapshots(branch_snaps)
+            context['branch_rows'] = branch_rows
+            context['overall_today'] = snap['today']
+            context['overall_month'] = snap['month']
+        else:
+            snap = _attendance_snapshot(active_user_ids, stats_branch, month_start, today)
+        context['present_today'] = snap['today']['present']
+        context['half_today'] = snap['today']['half']
+        context['absent_today'] = snap['today']['absent']
+        context['on_leave_today'] = snap['today']['leave']
+        context['permission_today'] = snap['today']['permission']
 
-        on_leave_month_count = 0
-        day = month_start
-        while day <= today:
-            on_leave_month_count += sum(
-                1 for r in approved_on_leave_for_date(day, active_branch) if r.user_id in active_user_ids
-            )
-            day += timedelta(days=1)
-
-        absent_month_count = _month_to_date_absent_days(
-            active_user_ids, active_branch, month_start, today
-        )
-
-        context['present_month'] = present_month_count
-        context['on_leave_month'] = on_leave_month_count
-        context['absent_month'] = absent_month_count
+        context['present_month'] = snap['month']['present']
+        context['half_month'] = snap['month']['half']
+        context['absent_month'] = snap['month']['absent']
+        context['on_leave_month'] = snap['month']['leave']
+        context['permission_month'] = snap['month']['permission']
 
         joiners_qs = base_qs.filter(
             user__date_joined_company__gte=month_start, user__date_joined_company__lte=today
@@ -491,12 +633,11 @@ def dashboard(request):
         context['exited_employees_count'] = exited_qs.count()
         context['current_month'] = month_start.strftime('%Y-%m')
 
-                # ---- Leave category breakdown (GM / QA Manager / CTO) ----
+        # ---- Leave category breakdown (GM / QA Manager / CTO) ----
         # Plain HR only sees their own branch, so one combined pie.
-        # GM (HR) = SENIOR_HR sees across every branch, so it splits
-        # into one pie per branch, same as the COO dashboard.
+        # GM (HR) on "All Branches" splits into one pie per branch.
         import json
-        if user.role == 'SENIOR_HR' and not active_branch:
+        if show_all:
             context['leave_category_by_branch'] = _leave_category_by_branch(month_start, today)
             context['leave_category_by_branch_json'] = json.dumps(context['leave_category_by_branch'])
             context['use_single_leave_category'] = False

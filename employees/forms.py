@@ -82,6 +82,7 @@ class EmployeeSelfEditForm(forms.ModelForm):
             'blood_group', 'uan_pf_number', 'esi_number',
             'aadhar_no', 'pan_no',
             'emergency_contact_name', 'emergency_contact_country_code', 'emergency_contact_phone',
+            'shift', 'work_type',
         ]
         widgets = {
             'address': forms.Textarea(attrs={'rows': 3}),
@@ -102,6 +103,11 @@ class EmployeeSelfEditForm(forms.ModelForm):
             self.fields['email'].initial = self.user_instance.email
             self.fields['phone'].initial = self.user_instance.phone
             self.fields['phone_country_code'].initial = self.user_instance.phone_country_code
+        # Shift / Type: regular employees have these set by HR, so only the
+        # top-level roles (no HR above them to fill it in) can set their own.
+        if not self.user_instance or self.user_instance.role not in ('ADMIN', 'SENIOR_HR', 'COO', 'CTO'):
+            self.fields.pop('shift', None)
+            self.fields.pop('work_type', None)
         # Show Aadhar pre-formatted with spaces even though it's stored raw.
         if self.instance and self.instance.pk and self.instance.aadhar_no:
             digits = self.instance.aadhar_no
@@ -133,7 +139,7 @@ class ProjectSelect(forms.Select):
         option = super().create_option(name, value, label, selected, index, subindex, attrs)
         if value:
             proj = Project.objects.filter(pk=value.value if hasattr(value, 'value') else value).select_related('manager__branch').first()
-            if proj and proj.manager_id and proj.manager and proj.manager.branch_id:
+            if proj and proj.manager_id and proj.manager.branch_id:
                 option['attrs']['data-branch'] = str(proj.manager.branch_id)
         return option
 
