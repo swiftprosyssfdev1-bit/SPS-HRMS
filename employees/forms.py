@@ -137,10 +137,16 @@ class ProjectSelect(forms.Select):
     show only projects belonging to whichever Branch is currently selected."""
     def create_option(self, name, value, label, selected, index, subindex=None, attrs=None):
         option = super().create_option(name, value, label, selected, index, subindex, attrs)
-        if value:
-            proj = Project.objects.filter(pk=value.value if hasattr(value, 'value') else value).select_related('manager__branch').first()
-            if proj and proj.manager_id and proj.manager.branch_id:
-                option['attrs']['data-branch'] = str(proj.manager.branch_id)
+        # ModelChoiceIteratorValue carries the instance already loaded by the
+        # field's queryset, so no per-option query is needed. The blank
+        # ("---------") option has no instance, and a project's manager can be
+        # None even when manager_id is set (dangling FK / filtered manager),
+        # so every step is guarded.
+        proj = getattr(value, 'instance', None)
+        manager = getattr(proj, 'manager', None) if proj is not None else None
+        branch_id = getattr(manager, 'branch_id', None)
+        if branch_id:
+            option['attrs']['data-branch'] = str(branch_id)
         return option
 
 
@@ -186,7 +192,7 @@ class HREmployeeEditForm(forms.ModelForm):
         required=False, widget=forms.Select(attrs={'class': 'form-control'}),
     )
     project = forms.ModelChoiceField(
-        queryset=Project.objects.all().order_by('name'),
+        queryset=Project.objects.select_related('manager').order_by('name'),
         required=False, widget=ProjectSelect(attrs={'class': 'form-control'}),
     )
     manager = forms.ModelChoiceField(
@@ -424,7 +430,7 @@ class OnboardHRForm(forms.ModelForm):
     )
     branch = forms.ModelChoiceField(queryset=Branch.objects.none(), required=False)
     project = forms.ModelChoiceField(
-        queryset=Project.objects.all().order_by('name'),
+        queryset=Project.objects.select_related('manager').order_by('name'),
         required=False,
         widget=ProjectSelect(attrs={'class': 'form-control'}),
     )
@@ -466,7 +472,7 @@ class OnboardHRForm(forms.ModelForm):
 
             self.fields['branch'].queryset = allowed_branches.order_by('code')
             self.fields['department'].queryset = Department.objects.all().order_by('name')
-            self.fields['project'].queryset = Project.objects.all().order_by('name')
+            self.fields['project'].queryset = Project.objects.select_related('manager').order_by('name')
 
             # An HR actor can only grant branch access to branches she
             # herself can access — she can't hand out access she doesn't
@@ -479,7 +485,7 @@ class OnboardHRForm(forms.ModelForm):
             self.fields['branch'].queryset = Branch.objects.all().order_by('code')
             self.fields['department'].queryset = Department.objects.all().order_by('name')
             if 'project' in self.fields:
-                self.fields['project'].queryset = Project.objects.all().order_by('name')
+                self.fields['project'].queryset = Project.objects.select_related('manager').order_by('name')
             self.fields['accessible_branches'].queryset = Branch.objects.all().order_by('code')
 
         for field in self.fields.values():
