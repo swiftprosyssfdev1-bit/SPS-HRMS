@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 from core.validators import COUNTRY_CODES
@@ -147,3 +148,49 @@ class MotivationalPost(models.Model):
 
     def __str__(self):
         return f"{self.title or 'Quote'} - {self.created_at.date()}"
+
+
+class ActivityLog(models.Model):
+    """Audit trail of who added / changed what on employee records.
+    Names are stored as snapshots so entries stay readable even if the
+    actor or the employee is later deleted."""
+    ADDED = 'ADDED'
+    UPDATED = 'UPDATED'
+    ROLE = 'ROLE'
+    STATUS = 'STATUS'
+    SALARY = 'SALARY'
+    CREDENTIALS = 'CREDENTIALS'
+    DOCUMENT = 'DOCUMENT'
+    ONBOARDED = 'ONBOARDED'
+    RESIGNATION = 'RESIGNATION'
+    DELETED = 'DELETED'
+    ACTION_CHOICES = [
+        (ADDED, 'Employee added'),
+        (UPDATED, 'Profile updated'),
+        (ROLE, 'Role changed'),
+        (STATUS, 'Status changed'),
+        (SALARY, 'Salary updated'),
+        (CREDENTIALS, 'Credentials reset'),
+        (DOCUMENT, 'Document deleted'),
+        (ONBOARDED, 'Onboarding completed'),
+        (RESIGNATION, 'Resignation reviewed'),
+        (DELETED, 'Employee deleted'),
+    ]
+
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    actor_name = models.CharField(max_length=150, blank=True)
+    actor_role = models.CharField(max_length=50, blank=True)
+    action = models.CharField(max_length=20, choices=ACTION_CHOICES, db_index=True)
+    target = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    target_name = models.CharField(max_length=150, blank=True)
+    branch = models.ForeignKey('core.Branch', null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    summary = models.CharField(max_length=255)
+    changes = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['-created_at', '-id']
+
+    def __str__(self):
+        return f"{self.actor_name or 'System'}: {self.summary}"
+

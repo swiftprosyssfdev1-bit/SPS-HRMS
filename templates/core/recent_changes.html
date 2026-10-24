@@ -1,0 +1,91 @@
+{% extends 'core/base.html' %}
+{% block title %}Recent Changes - SPS HRMS{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Recent Changes</h1>
+  <a href="{% url 'core:dashboard' %}" class="btn btn-outline">&larr; Back to Dashboard</a>
+</div>
+
+<div class="card">
+  <form method="get" id="changes-filter-form" style="display:flex; gap:12px; flex-wrap:wrap; align-items:end; margin-bottom:0;">
+    <div style="flex:2; min-width:220px;">
+      <label>Search</label>
+      <input type="text" name="q" value="{{ q }}" class="form-control" placeholder="Search by person who made the change, employee or details" style="margin-bottom:0;">
+    </div>
+    <div style="flex:1; min-width:180px;">
+      <label>Action</label>
+      <select name="action" class="form-control" style="margin-bottom:0;" onchange="this.form.submit()">
+        <option value="">All Actions</option>
+        {% for value, label in action_choices %}
+        <option value="{{ value }}" {% if value == selected_action %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div style="flex:1; min-width:180px;">
+      <label>Branch</label>
+      <select name="branch" class="form-control" style="margin-bottom:0;" onchange="this.form.submit()">
+        <option value="">All Branches</option>
+        {% for b in branches %}
+        <option value="{{ b.id }}" {% if b.id|stringformat:"s" == selected_branch %}selected{% endif %}>{{ b.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <button type="submit" class="btn btn-primary">Search</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <table>
+    <tr>
+      <th>When</th>
+      <th>Done by</th>
+      <th>Action</th>
+      <th>Employee</th>
+      <th>Branch</th>
+      <th>Details</th>
+    </tr>
+    {% for log in page_obj %}
+    <tr>
+      <td style="white-space:nowrap;">{{ log.created_at|date:"d M Y, h:i A" }}</td>
+      <td>
+        {{ log.actor_name|default:"System" }}
+        {% if log.actor_role %}<br><span style="font-size:0.78rem; color:var(--grey-500);">{{ log.actor_role }}</span>{% endif %}
+      </td>
+      <td>
+        {% if log.action == 'DELETED' %}<span class="badge badge-danger">{{ log.get_action_display }}</span>
+        {% elif log.action == 'ADDED' or log.action == 'ONBOARDED' %}<span class="badge badge-active">{{ log.get_action_display }}</span>
+        {% else %}<span class="badge badge-info">{{ log.get_action_display }}</span>{% endif %}
+      </td>
+      <td>
+        {% if log.target_id %}
+          <a href="{% url 'employees:employee_detail' log.target_id %}">{{ log.target_name|default:"-" }}</a>
+        {% else %}
+          {{ log.target_name|default:"-" }}
+        {% endif %}
+      </td>
+      <td>{{ log.branch.name|default:"-" }}</td>
+      <td>
+        {{ log.summary }}
+        {% include 'components/recent_changes_list.html' %}
+      </td>
+    </tr>
+    {% empty %}
+    <tr><td colspan="6" class="empty-state">No changes recorded yet.</td></tr>
+    {% endfor %}
+  </table>
+
+  {% if page_obj.paginator.num_pages > 1 %}
+  <div style="display:flex; gap:10px; align-items:center; justify-content:flex-end; margin-top:14px;">
+    {% if page_obj.has_previous %}
+    <a class="btn btn-outline btn-sm" href="?{% if querystring %}{{ querystring }}&{% endif %}page={{ page_obj.previous_page_number }}">&larr; Previous</a>
+    {% endif %}
+    <span style="font-size:0.85rem; color:var(--grey-500);">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+    {% if page_obj.has_next %}
+    <a class="btn btn-outline btn-sm" href="?{% if querystring %}{{ querystring }}&{% endif %}page={{ page_obj.next_page_number }}">Next &rarr;</a>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

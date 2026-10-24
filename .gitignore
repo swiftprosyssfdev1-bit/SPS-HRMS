@@ -1,8 +1,13 @@
-__pycache__/
-*.pyc
-.venv/
-venv/
-env/
+# Private employee uploads and generated documents
+media/
+
+# Environment secrets
 .env
-output/
-*.log
+.env.*
+!.env.example
+
+# Python generated files
+venv/
+.venv/
+__pycache__/
+*.py[cod]

@@ -11,7 +11,8 @@ from leaves.models import LeaveRequest
 from employees.models import EmployeeProfile
 from django.contrib import messages
 from core.utils import user_can_switch_branch, get_manager_team, get_gm_scope
-from core.models import Branch, User
+from core.models import Branch, User, ActivityLog
+from django.core.paginator import Paginator
 
 
 def _month_to_date_absent_days(user_ids, branch, month_start, end_date, on_leave_pairs=None):
@@ -569,6 +570,13 @@ def dashboard(request):
         stats_branch = None if show_all else active_branch
         context['show_all_branches'] = show_all
 
+        # GM (HR) sees who added / changed what on employee records.
+        if user.role == 'SENIOR_HR':
+            recent_qs = ActivityLog.objects.select_related('actor', 'target', 'branch')
+            if stats_branch:
+                recent_qs = recent_qs.filter(branch=stats_branch)
+            context['recent_changes'] = list(recent_qs[:8])
+
         base_qs = EmployeeProfile.objects.exclude(user__role__in=['HR', 'SENIOR_HR', 'ADMIN'])
         if stats_branch:
             base_qs = base_qs.filter(user__branch=stats_branch)
@@ -752,3 +760,41 @@ def manage_motivational_post(request):
         form = MotivationalPostForm(initial={'is_active': True})
 
     return render(request, 'core/manage_motivational_post.html', {'form': form, 'posts': posts})
+
+
+@login_required
+def recent_changes(request):
+    """GM (HR) only: full history of who added / modified employee records."""
+    if request.user.role != 'SENIOR_HR':
+        messages.error(request, "Only GM (HR) can view Recent Changes.")
+        return redirect('core:dashboard')
+
+    qs = ActivityLog.objects.select_related('actor', 'target', 'branch')
+
+    q = request.GET.get('q', '').strip()
+    action = request.GET.get('action', '').strip()
+    branch_id = request.GET.get('branch', '').strip()
+    if q:
+        qs = qs.filter(
+            Q(actor_name__icontains=q) | Q(target_name__icontains=q) | Q(summary__icontains=q)
+        )
+    if action in dict(ActivityLog.ACTION_CHOICES):
+        qs = qs.filter(action=action)
+    if branch_id.isdigit():
+        qs = qs.filter(branch_id=int(branch_id))
+
+    page_obj = Paginator(qs, 25).get_page(request.GET.get('page'))
+
+    params = request.GET.copy()
+    params.pop('page', None)
+
+    return render(request, 'core/recent_changes.html', {
+        'page_obj': page_obj,
+        'q': q,
+        'selected_action': action,
+        'selected_branch': branch_id,
+        'action_choices': ActivityLog.ACTION_CHOICES,
+        'branches': Branch.objects.all().order_by('name'),
+        'querystring': params.urlencode(),
+    })
+

@@ -204,6 +204,9 @@
     <a href="{% url 'employees:joiners_exits' %}?type=exited&month={{ current_month }}" style="display:inline-block; margin-top:8px; font-size:0.78rem; color:var(--electric-blue); font-weight:600; text-decoration:none;">View details &rarr;</a>
   </div>
 </div>
+{% if user.role == 'SENIOR_HR' %}
+{% include 'components/recent_changes_card.html' %}
+{% endif %}
 {% if show_all_branches %}
 <h3 style="margin:24px 0 12px;">Today — Branch-wise Details</h3>
 <div class="card" style="overflow-x:auto;">

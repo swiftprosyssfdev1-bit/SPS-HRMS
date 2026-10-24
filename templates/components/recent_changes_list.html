@@ -1,0 +1,14 @@
+{# Expand/collapse list of field changes for one ActivityLog entry #}
+{% if log.changes %}
+<details style="margin-top:4px;">
+  <summary style="cursor:pointer; font-size:0.8rem; color:var(--electric-blue); font-weight:600;">{{ log.changes|length }} change{{ log.changes|length|pluralize }}</summary>
+  <ul style="margin:6px 0 0; padding-left:18px; font-size:0.82rem; color:var(--grey-700);">
+    {% for c in log.changes %}
+    <li>
+      <strong>{{ c.field }}</strong>:
+      {% if c.old %}<span style="color:var(--grey-500);">{{ c.old }}</span> &rarr; {% endif %}<span>{{ c.new }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</details>
+{% endif %}

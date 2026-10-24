@@ -21,3 +21,19 @@ def can_approve_increments(user):
     if not user.is_authenticated:
         return False
     return user.role == 'COO'
+
+def can_access_user_branch(acting_user, target_user):
+    """Can acting_user view/manage target_user based on branch authorization."""
+    if not acting_user.is_authenticated:
+        return False
+    if can_view_all_branches(acting_user):
+        return True
+    if acting_user.id == target_user.id:
+        return True
+    if not target_user.branch_id:
+        return False
+    allowed_ids = set()
+    if acting_user.branch_id:
+        allowed_ids.add(acting_user.branch_id)
+    allowed_ids.update(acting_user.accessible_branches.values_list('id', flat=True))
+    return target_user.branch_id in allowed_ids

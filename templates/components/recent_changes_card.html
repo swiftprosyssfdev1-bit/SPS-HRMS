@@ -1,0 +1,26 @@
+<div class="card" style="margin-top:24px;">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+    <h3 style="margin:0;">Recent Changes</h3>
+    <a href="{% url 'core:recent_changes' %}" style="font-size:0.85rem; color:var(--electric-blue); font-weight:600; text-decoration:none;">View all &rarr;</a>
+  </div>
+  <table>
+    <tr>
+      <th>When</th>
+      <th>By</th>
+      <th>What happened</th>
+    </tr>
+    {% for log in recent_changes %}
+    <tr>
+      <td style="white-space:nowrap;">{{ log.created_at|date:"d M Y, h:i A" }}</td>
+      <td>{{ log.actor_name|default:"System" }}{% if log.actor_role %}<br><span style="font-size:0.78rem; color:var(--grey-500);">{{ log.actor_role }}</span>{% endif %}</td>
+      <td>
+        <span class="badge badge-info">{{ log.get_action_display }}</span>
+        {{ log.summary }}
+        {% include 'components/recent_changes_list.html' %}
+      </td>
+    </tr>
+    {% empty %}
+    <tr><td colspan="3" class="empty-state">No changes recorded yet.</td></tr>
+    {% endfor %}
+  </table>
+</div>

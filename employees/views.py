@@ -8,8 +8,10 @@ from django.utils import timezone
 from django.urls import reverse
 
 from core.decorators import admin_only_required, hr_or_admin_required, hr_only_required, hr_admin_or_manager_required, role_required
-from core.models import User, Branch
+from core.models import User, Branch, ActivityLog
+from core.audit import log_activity, snapshot, snapshot_all, diff_snapshots, USER_AUDIT_FIELDS
 from core.utils import user_can_switch_branch
+from core.permissions import can_access_user_branch
 
 from attendance.models import AttendanceRecord
 from employees.models import EmployeeProfile, EmployeeDocument, ResignationRequest, BankDetail, TrainingFeedback
@@ -60,6 +62,8 @@ def _can_edit_identity(acting_user, emp_user):
         return True
     if acting_user.role == 'HR':
         if emp_user.role in ('ADMIN', 'COO', 'SENIOR_HR'):
+            return False
+        if not can_access_user_branch(acting_user, emp_user):
             return False
         return True
     return False
@@ -130,6 +134,15 @@ def _primary_branch(branches):
     return branches[0]
 
 
+def _employee_read_only_guard(request):
+    """Regular employees can view their profile but not change it.
+    Returns a redirect response if the user is a plain EMPLOYEE, else None."""
+    if request.user.role == User.ROLE_EMPLOYEE:
+        messages.error(request, 'You cannot edit your profile. Please contact HR to update your details.')
+        return redirect('employees:my_profile')
+    return None
+
+
 @login_required
 def my_profile(request):
     profile, _ = EmployeeProfile.objects.get_or_create(user=request.user)
@@ -155,25 +168,40 @@ def edit_my_profile(request):
     """Employee's own edit page â€” separate from the read-only my_profile
     view. Photo, the handful of self-editable fields, bank details, and
     document upload/delete all live here."""
+    blocked = _employee_read_only_guard(request)
+    if blocked:
+        return blocked
+
     profile, _ = EmployeeProfile.objects.get_or_create(user=request.user)
     bank_detail, _ = BankDetail.objects.get_or_create(user=request.user)
 
     if request.method == 'POST':
+        before_user = snapshot(request.user, USER_AUDIT_FIELDS)
+        before_profile = snapshot_all(profile)
+        before_bank = snapshot_all(bank_detail)
+        audit_changes = []
+
         form = EmployeeSelfEditForm(request.POST, request.FILES, instance=profile, user_instance=request.user)
         bank_form = BankDetailForm(request.POST, instance=bank_detail)
 
         saved_anything = False
         if form.is_valid():
             form.save()
+            audit_changes += diff_snapshots(before_user, snapshot(request.user, USER_AUDIT_FIELDS))
+            audit_changes += diff_snapshots(before_profile, snapshot_all(profile))
             saved_anything = True
         else:
             messages.error(request, 'Please fix the highlighted profile fields below.')
 
         if bank_form.is_valid():
             bank_form.save()
+            audit_changes += diff_snapshots(before_bank, snapshot_all(bank_detail))
             saved_anything = True
         else:
             messages.error(request, 'Please fix the highlighted bank detail fields below.')
+
+        if audit_changes:
+            log_activity(request, ActivityLog.UPDATED, request.user, f"{request.user} updated their own profile", audit_changes)
 
         if saved_anything:
             messages.success(request, 'Your profile has been updated.')
@@ -197,6 +225,10 @@ def edit_my_profile(request):
 
 @login_required
 def upload_own_document(request):
+    blocked = _employee_read_only_guard(request)
+    if blocked:
+        return blocked
+
     if request.method == 'POST':
         form = SelfDocumentForm(request.POST, request.FILES)
         if form.is_valid():
@@ -215,6 +247,10 @@ def delete_own_document(request, doc_id):
     """An employee can remove a document they uploaded to their own
     profile. Scoped to request.user so nobody can delete someone else's
     document by guessing an id."""
+    blocked = _employee_read_only_guard(request)
+    if blocked:
+        return blocked
+
     doc = get_object_or_404(EmployeeDocument, id=doc_id, user=request.user)
     if request.method == 'POST':
         doc.delete()
@@ -282,6 +318,10 @@ def approve_resignation(request, resignation_id):
 
         # approve() sets profile.status='EXITED', exit_date and exit_reason.
         resignation.approve(hr_user=request.user, notice_period_days=days)
+        log_activity(
+            request, ActivityLog.RESIGNATION, resignation.user,
+            f"Approved resignation of {resignation.user} (notice {days} days, exit {resignation.exit_date})",
+        )
         
         from django.core.mail import send_mail
         from django.conf import settings
@@ -325,6 +365,7 @@ def reject_resignation(request, resignation_id):
 
     if request.method == 'POST':
         resignation.reject(hr_user=request.user)
+        log_activity(request, ActivityLog.RESIGNATION, resignation.user, f"Rejected resignation of {resignation.user}")
         
         from django.core.mail import send_mail
         from django.conf import settings
@@ -516,6 +557,11 @@ def employee_directory(request):
     employees = User.objects.select_related('department', 'profile', 'branch')
 
     active_branch = getattr(request, 'active_branch', None)
+    # GM (HR) picked "All Branches" on the dashboard -> list every branch here too.
+    show_all_branches = (
+        request.user.role == 'SENIOR_HR'
+        and bool(request.session.get('dashboard_all_branches'))
+    )
     is_gm = request.user.role == 'GENERAL_MANAGER'
     is_team_scoped_manager = request.user.role in ('MANAGER', 'PROJECT_MANAGER', 'CTO')
 
@@ -531,9 +577,11 @@ def employee_directory(request):
         from core.utils import get_manager_team
         team_ids = get_manager_team(request.user).values_list('id', flat=True)
         employees = employees.filter(id__in=list(team_ids))
+    elif show_all_branches:
+        pass  # no branch filter: employees from every branch
     elif active_branch:
-        # Everyone else sees the directory for the currently selected active branch (Admins and COOs are also visible everywhere)
-        employees = employees.filter(Q(branch=active_branch) | Q(role__in=['ADMIN', 'COO', 'HR', 'SENIOR_HR'])).distinct()
+        # Show only employees and staff belonging to the active branch
+        employees = employees.filter(branch=active_branch)
     else:
         # Prevent users from seeing all data if they lack an active branch
         employees = User.objects.none()
@@ -562,6 +610,8 @@ def employee_directory(request):
     elif is_team_scoped_manager:
         from core.utils import get_manager_team
         base_qs = base_qs.filter(id__in=list(get_manager_team(request.user).values_list('id', flat=True)))
+    elif show_all_branches:
+        pass  # departments from every branch
     elif active_branch:
         base_qs = base_qs.filter(branch=active_branch)
     dept_qs = base_qs.select_related('department')
@@ -637,6 +687,7 @@ def employee_directory(request):
         'selected_status': status_filter,
         'is_team_view': is_team_view,
         'directory_groups': directory_groups,
+        'show_all_branches': show_all_branches,
     })
 
 
@@ -648,6 +699,10 @@ def employee_detail(request, user_id):
 
     if request.user.role in ('HR', 'SENIOR_HR') and emp_user.role == 'ADMIN':
         messages.error(request, "You do not have permission to view this account.")
+        return redirect('employees:directory')
+
+    if request.user.role == 'HR' and not can_access_user_branch(request.user, emp_user):
+        messages.error(request, "You do not have permission to view employees from another branch.")
         return redirect('employees:directory')
 
     if request.user.is_manager():
@@ -723,23 +778,28 @@ def reset_employee_credentials(request, user_id):
         new_password = request.POST.get('new_password', '')
 
         changed = False
+        old_username = emp_user.username
+        credential_changes = []
         if new_username and new_username != emp_user.username:
             if User.objects.exclude(id=emp_user.id).filter(username=new_username).exists():
                 messages.error(request, f'Username "{new_username}" is already taken.')
                 return redirect('employees:reset_employee_credentials', user_id=emp_user.id)
             emp_user.username = new_username
+            credential_changes.append({'field': 'Username', 'old': old_username, 'new': new_username})
             changed = True
 
         if new_password:
             emp_user.set_password(new_password)
+            credential_changes.append({'field': 'Password', 'old': '(hidden)', 'new': '(changed)'})
             changed = True
 
         if changed:
             emp_user.save()
+            log_activity(request, ActivityLog.CREDENTIALS, emp_user, f"Reset login credentials of {emp_user}", credential_changes)
             messages.success(request, f'Login credentials updated for {emp_user}.')
         else:
             messages.info(request, 'Nothing to update — enter a new username and/or password.')
-        return redirect('employees:employee_detail', user_id=emp_user.id)
+        return redirect('employees:directory')
 
     return render(request, 'employees/reset_credentials.html', {'emp_user': emp_user})
 
@@ -765,10 +825,17 @@ def update_employee_status(request, user_id):
     if request.method == 'POST':
         new_status = request.POST.get('status')
         if new_status in ('ONBOARDING', 'ACTIVE', 'EXITED'):
+            old_status_label = profile.get_status_display()
             if new_status == 'ACTIVE' and profile.status == 'EXITED' and not profile.old_joining_date:
                 profile.old_joining_date = emp_user.date_joined_company
             profile.status = new_status
             profile.save()
+            if profile.get_status_display() != old_status_label:
+                log_activity(
+                    request, ActivityLog.STATUS, emp_user,
+                    f"Changed status of {emp_user} from {old_status_label} to {profile.get_status_display()}",
+                    [{'field': 'Status', 'old': old_status_label, 'new': profile.get_status_display()}],
+                )
             messages.success(request, f"{emp_user}'s status changed to {profile.get_status_display()}.")
         else:
             messages.error(request, "Invalid status selected.")
@@ -856,6 +923,10 @@ def delete_document(request, user_id, doc_id):
     emp_user = get_object_or_404(User, id=user_id)
     doc = get_object_or_404(EmployeeDocument, id=doc_id, user=emp_user)
     if request.method == 'POST':
+        log_activity(
+            request, ActivityLog.DOCUMENT, emp_user,
+            f"Deleted document ({doc.get_doc_type_display()}) of {emp_user}",
+        )
         doc.delete()
         messages.success(request, 'Document deleted.')
     if request.POST.get('next') == 'issue_letter':
@@ -869,7 +940,7 @@ def edit_employee_profile(request, user_id):
 
     if not _can_edit_identity(request.user, emp_user):
         messages.error(request, "You do not have permission to edit this profile.")
-        return redirect('employees:employee_detail', user_id=emp_user.id)
+        return redirect('employees:directory')
 
     profile, _ = EmployeeProfile.objects.get_or_create(user=emp_user)
     bank_detail, _ = BankDetail.objects.get_or_create(user=emp_user)
@@ -878,6 +949,13 @@ def edit_employee_profile(request, user_id):
     enrollment_prefix = enrollment_prefix_for_branch(emp_user.branch)
 
     if request.method == 'POST':
+        # Snapshots must come BEFORE the forms are bound: ModelForm validation
+        # writes the submitted values onto these instances.
+        before_user = snapshot(emp_user, USER_AUDIT_FIELDS)
+        before_profile = snapshot_all(profile)
+        before_bank = snapshot_all(bank_detail)
+        audit_changes = []
+
         form = HREmployeeEditForm(request.POST, instance=emp_user, acting_user=request.user)
         identity_form = EmployeeIdentityForm(request.POST, request.FILES, instance=profile)
         bank_form = BankDetailForm(request.POST, instance=bank_detail)
@@ -894,6 +972,7 @@ def edit_employee_profile(request, user_id):
             user_obj = form.save(commit=False)
             if 'new_password' in form.cleaned_data and form.cleaned_data['new_password']:
                 user_obj.set_password(form.cleaned_data['new_password'])
+                audit_changes.append({'field': 'Password', 'old': '(hidden)', 'new': '(changed)'})
                 
             if emp_user.role in ('HR', 'SENIOR_HR'):
                 user_obj.branch = emp_user.branch  # HR branch is admin-set, not editable here
@@ -920,6 +999,7 @@ def edit_employee_profile(request, user_id):
             user_obj.save()
             if emp_user.role in ('HR', 'SENIOR_HR'):
                 user_obj.accessible_branches.set(form.cleaned_data.get('accessible_branches'))
+            audit_changes += diff_snapshots(before_user, snapshot(user_obj, USER_AUDIT_FIELDS))
 
             employee_id_prefix = current_employee_id_prefix
             enrollment_prefix = current_enrollment_prefix
@@ -932,15 +1012,20 @@ def edit_employee_profile(request, user_id):
             if enrollment_suffix:
                 profile_obj.enrollment_id = f"{enrollment_prefix}{enrollment_suffix}"
             profile_obj.save()
+            audit_changes += diff_snapshots(before_profile, snapshot_all(profile_obj))
             saved_anything = True
         else:
             messages.error(request, f"Some identity fields need fixing â€” those weren't saved. Errors: {identity_form.errors}")
 
         if bank_form.is_valid():
             bank_form.save()
+            audit_changes += diff_snapshots(before_bank, snapshot_all(bank_form.instance))
             saved_anything = True
         else:
             messages.error(request, "Some bank details need fixing â€” those weren't saved.")
+
+        if audit_changes:
+            log_activity(request, ActivityLog.UPDATED, emp_user, f"Updated profile of {emp_user}", audit_changes)
 
         if saved_anything:
             messages.success(request, f"{emp_user}'s profile has been updated.")
@@ -990,9 +1075,16 @@ def change_role(request, user_id):
         return redirect('employees:edit_employee_profile', user_id=emp_user.id)
 
     if request.method == 'POST':
+        old_role_label = emp_user.get_role_display()
         form = RoleChangeForm(request.POST, instance=emp_user, acting_user=request.user)
         if form.is_valid():
             form.save()
+            if emp_user.get_role_display() != old_role_label:
+                log_activity(
+                    request, ActivityLog.ROLE, emp_user,
+                    f"Changed role of {emp_user} from {old_role_label} to {emp_user.get_role_display()}",
+                    [{'field': 'Role', 'old': old_role_label, 'new': emp_user.get_role_display()}],
+                )
             messages.success(request, f"{emp_user}'s role changed to {emp_user.get_role_display()}.")
         else:
             messages.error(request, "Invalid role selection.")
@@ -1002,6 +1094,9 @@ def change_role(request, user_id):
 @hr_only_required
 def delete_employee(request, user_id):
     emp_user = get_object_or_404(User, id=user_id)
+    if request.user.role == 'HR' and not can_access_user_branch(request.user, emp_user):
+        messages.error(request, "You do not have permission to delete employees from another branch.")
+        return redirect('employees:directory')
     if emp_user == request.user:
         messages.error(request, "You cannot delete your own account.")
         return redirect('employees:directory')
@@ -1013,6 +1108,10 @@ def delete_employee(request, user_id):
 
     if request.method == 'POST':
         name = str(emp_user)
+        log_activity(
+            request, ActivityLog.DELETED, emp_user,
+            f"Deleted {name} ({emp_user.employee_id or 'no ID'}) from the system",
+        )
         emp_user.delete()
         messages.success(request, f"{name} has been removed from the system")
         return redirect('employees:directory')
@@ -1022,11 +1121,18 @@ def delete_employee(request, user_id):
 @hr_only_required
 def update_salary_structure(request, user_id):
     emp_user = get_object_or_404(User, id=user_id)
+    if request.user.role == 'HR' and not can_access_user_branch(request.user, emp_user):
+        messages.error(request, "You do not have permission to update salary details for employees from another branch.")
+        return redirect('employees:directory')
     structure, _ = SalaryStructure.objects.get_or_create(user=emp_user, defaults={'basic': 0})
     if request.method == 'POST':
+        before_salary = snapshot_all(structure)
         form = SalaryStructureForm(request.POST, instance=structure)
         if form.is_valid():
             form.save()
+            salary_changes = diff_snapshots(before_salary, snapshot_all(structure), hide_values=True)
+            if salary_changes:
+                log_activity(request, ActivityLog.SALARY, emp_user, f"Updated salary structure of {emp_user}", salary_changes)
             messages.success(request, 'Salary structure saved.')
         else:
             messages.error(request, 'Please fix the highlighted salary fields.')
@@ -1103,6 +1209,19 @@ def my_resignation(request):
     })
 
 
+def _log_employee_added(request, user):
+    log_activity(
+        request, ActivityLog.ADDED, user,
+        f"Added {user} as {user.get_role_display()}",
+        changes=[
+            {'field': 'Employee id', 'old': '', 'new': user.employee_id or '\u2014'},
+            {'field': 'Role', 'old': '', 'new': user.get_role_display()},
+            {'field': 'Branch', 'old': '', 'new': str(user.branch) if user.branch else '\u2014'},
+            {'field': 'Department', 'old': '', 'new': str(user.department) if user.department else '\u2014'},
+        ],
+    )
+
+
 @hr_or_admin_required
 def onboard_hr(request):
     """FIXED: the role-dispatch block used to be indented at the same
@@ -1167,6 +1286,7 @@ def onboard_hr(request):
                     request,
                     f'{user} onboarded as {role_label} successfully (Employee ID {user.employee_id}, Enrollment ID {profile.enrollment_id}).'
                 )
+                _log_employee_added(request, user)
                 return redirect('employees:employee_detail', user_id=user.id)
 
             else:  # HR, Senior HR, Admin, or COO
@@ -1196,6 +1316,7 @@ def onboard_hr(request):
                 else:
                     messages.success(request, f'{user} onboarded as Admin successfully.')
 
+                _log_employee_added(request, user)
                 return redirect('employees:employee_detail', user_id=user.id)
         # form invalid â€” fall through to re-render with errors below
     else:
@@ -1227,6 +1348,7 @@ def complete_onboarding(request, user_id):
     if request.method == 'POST':
         profile.status = 'ACTIVE'
         profile.save()
+        log_activity(request, ActivityLog.ONBOARDED, emp_user, f"Completed onboarding of {emp_user} (now Active)")
         messages.success(request, f"{emp_user} has completed onboarding and is now Active.")
     return redirect('employees:employee_detail', user_id=emp_user.id)
 import csv

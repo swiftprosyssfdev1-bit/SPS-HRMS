@@ -8,6 +8,7 @@ from django.utils import timezone
 
 from core.decorators import hr_or_admin_required, hr_only_required, hr_admin_or_manager_required
 from core.models import User
+from core.permissions import can_access_user_branch
 from attendance.models import AttendanceRecord, MonthlyAttendanceSheet 
 from attendance.utils import (
     normalize_year_month, build_monthly_summary, generate_monthly_excel,
@@ -77,6 +78,10 @@ def attendance_reports(request):
 @hr_admin_or_manager_required
 def employee_attendance(request, user_id):
     emp_user = get_object_or_404(User, id=user_id)
+
+    if request.user.role == 'HR' and not can_access_user_branch(request.user, emp_user):
+        messages.error(request, "You do not have permission to view attendance for employees from another branch.")
+        return redirect('employees:directory')
 
     if request.user.is_manager():
         # Same fix as employees.employee_detail/my_department: a flat
@@ -219,6 +224,10 @@ def my_monthly_attendance_archive(request):
 @hr_or_admin_required
 def employee_attendance_view(request, user_id):
     emp_user = get_object_or_404(User, id=user_id)
+
+    if request.user.role == 'HR' and not can_access_user_branch(request.user, emp_user):
+        messages.error(request, "You do not have permission to view attendance for employees from another branch.")
+        return redirect('employees:directory')
     context = _build_attendance_context(emp_user, request, emp_user=emp_user)
     return render(request, 'attendance/attendance_view.html', context)
 
@@ -226,6 +235,10 @@ def employee_attendance_view(request, user_id):
 @hr_or_admin_required
 def download_employee_attendance_view(request, user_id):
     emp_user = get_object_or_404(User, id=user_id)
+
+    if request.user.role == 'HR' and not can_access_user_branch(request.user, emp_user):
+        messages.error(request, "You do not have permission to download attendance for employees from another branch.")
+        return redirect('employees:directory')
     view_type, year, month, week = _attendance_view_params(request)
     if view_type == 'weekly':
         summary = build_weekly_summary(emp_user, year, month, week)

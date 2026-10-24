@@ -12,7 +12,7 @@
       {% elif latest_resignation.status == 'NEGOTIATING' %}
       <span class="badge badge-info">HR Has Sent You an Offer — See Below</span>
       {% elif profile.status != 'EXITED' %}
-      <a href="{% url 'employees:edit_my_profile' %}" class="btn btn-accent">Edit Profile</a>
+      {% if user.role != 'EMPLOYEE' %}<a href="{% url 'employees:edit_my_profile' %}" class="btn btn-accent">Edit Profile</a>{% endif %}
       <a href="{% url 'employees:apply_resignation' %}" class="btn btn-danger">Apply for Resignation</a>
       {% endif %}
     {% endif %}
@@ -121,7 +121,7 @@
     <div><label style="font-weight:700;">Branch</label><p style="margin:0;">{{ user.branch|default:"-" }}</p></div>
   </div>
   <p style="color:var(--grey-500); font-size:0.8rem; margin:14px 0 0;">
-    Identity fields above are managed by HR / your Manager. Use the Edit Profile button to change your photo, contact details, or documents.
+    Identity fields above are managed by HR / your Manager. {% if user.role == 'EMPLOYEE' %}Contact HR if any of your details need to be updated.{% else %}Use the Edit Profile button to change your photo, contact details, or documents.{% endif %}
   </p>
 </div>
 
@@ -151,6 +151,6 @@
     </tr>
     {% empty %}<tr><td colspan="3" class="empty-state">No documents uploaded yet.</td></tr>{% endfor %}
   </table>
-  <p style="color:var(--grey-500); font-size:0.8rem; margin:10px 0 0;">Use Edit Profile to upload or delete documents.</p>
+  <p style="color:var(--grey-500); font-size:0.8rem; margin:10px 0 0;">{% if user.role != 'EMPLOYEE' %}Use Edit Profile to upload or delete documents.{% endif %}</p>
 </div>
 {% endblock %}
