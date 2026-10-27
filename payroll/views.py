@@ -354,11 +354,11 @@ def run_payroll_for_all(request):
 
 @hr_or_admin_required
 def salary_structures(request):
-    structures = SalaryStructure.objects.select_related('user')
-    active_branch = getattr(request, 'active_branch', None)
-    if active_branch:
-        structures = structures.filter(Q(user__branch=active_branch) | Q(user__role__in=['COO', 'SENIOR_HR']))
-    return render(request, 'payroll/salary_structures.html', {'structures': structures})
+    # The all-employees salary list is retired: salary structures are now
+    # opened per employee from Payroll Runs (Salary Structure button).
+    # To bring the old list back, restore the three lines that used to be
+    # here (queryset + render of payroll/salary_structures.html).
+    return redirect('payroll:runs')
 
 
 @hr_only_required
@@ -377,7 +377,7 @@ def edit_salary_structure(request, user_id):
         if form.is_valid():
             form.save()
             messages.success(request, 'Salary structure saved.')
-            return redirect(next_url or reverse('payroll:salary_structures'))
+            return redirect(next_url or reverse('payroll:runs'))
     else:
         form = SalaryStructureForm(instance=structure)
 

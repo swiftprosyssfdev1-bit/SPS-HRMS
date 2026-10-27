@@ -13,7 +13,7 @@
       {% csrf_token %}
       <input type="hidden" name="next" value="{{ request.path }}">
       <select name="branch_id" class="form-control" style="margin:0; min-width:200px;" onchange="this.form.submit()">
-        {% if user.role == 'SENIOR_HR' %}
+        {% if user.role == 'SENIOR_HR' or user.role == 'COO' %}
         <option value="all" {% if show_all_branches %}selected{% endif %}>All Branches</option>
         {% endif %}
         {% for b in all_branches %}

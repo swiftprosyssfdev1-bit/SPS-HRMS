@@ -21,7 +21,7 @@
       <p class="proj-card-desc">{{ p.description|truncatewords:15 }}</p>
       <div class="proj-card-meta">
         <span>Lead: {{ p.lead|default:"Unassigned" }}</span>
-        <span>Team size: {{ p.assignments.count }}</span>
+        <span>Team size: {{ p.current_team_size }}</span>
       </div>
     </div>
     {% empty %}<p class="empty-state">No active projects right now.</p>{% endfor %}
@@ -61,7 +61,7 @@
       <p class="proj-card-desc">{{ p.description|truncatewords:15 }}</p>
       <div class="proj-card-meta">
         <span>Lead: {{ p.lead|default:"Unassigned" }}</span>
-        <span>Team size: {{ p.assignments.count }}</span>
+        <span>Team size: {{ p.current_team_size }}</span>
       </div>
     </div>
     {% empty %}<p class="empty-state">No completed projects yet.</p>{% endfor %}

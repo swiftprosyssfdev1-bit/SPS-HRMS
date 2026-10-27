@@ -94,3 +94,13 @@ def get_gm_pms(gm):
     ).values_list('manager_id', flat=True)
     
     return (direct_pms | User.objects.filter(id__in=project_pm_ids).distinct()).distinct()
+
+
+def dashboard_all_branches(request):
+    """True when GM (HR) / COO should see every branch at once on the dashboard.
+    It is the DEFAULT for those two roles; it only turns off after they pick one
+    specific branch in the dashboard dropdown (and back on with "All Branches")."""
+    if request.user.role not in ('SENIOR_HR', 'COO'):
+        return False
+    return bool(request.session.get('dashboard_all_branches', True))
+

@@ -1,0 +1,91 @@
+{% extends 'core/base.html' %}
+{% block title %}Leave Categories - SPS HRMS{% endblock %}
+{% block content %}
+<style>
+  .lc-grid { display:grid; grid-template-columns: minmax(280px, 360px) 1fr; gap:24px; align-items:start; }
+  @media (max-width: 900px) { .lc-grid { grid-template-columns: 1fr; } }
+  .lc-card { background:#fff; border-radius:14px; box-shadow:0 1px 3px rgba(16,24,40,.08); padding:22px; }
+  .lc-card h3 { margin:0 0 14px; font-size:1.05rem; }
+  .lc-card p.hint { color:#6b7280; font-size:.85rem; margin:0 0 14px; }
+  .lc-input { width:100%; box-sizing:border-box; padding:9px 12px; border:1px solid #d1d5db; border-radius:10px; font:inherit; }
+  .lc-input:focus { outline:none; border-color:#2563eb; box-shadow:0 0 0 3px rgba(37,99,235,.15); }
+  .lc-table { width:100%; border-collapse:collapse; }
+  .lc-table th { text-align:left; font-size:.72rem; letter-spacing:.04em; text-transform:uppercase; color:#8a94a6; padding:8px 10px; border-bottom:1px solid #e5e7eb; }
+  .lc-table td { padding:10px; border-bottom:1px solid #f0f1f4; vertical-align:middle; }
+  .lc-table form { margin:0; }
+  .lc-name { min-width:180px; }
+  .lc-order { width:70px; }
+  .lc-code { color:#9ca3af; font-size:.78rem; }
+  .lc-pill { font-size:.75rem; font-weight:600; padding:3px 10px; border-radius:999px; white-space:nowrap; }
+  .lc-pill.on { background:#dcfce7; color:#15803d; }
+  .lc-pill.off { background:#f3f4f6; color:#6b7280; }
+  .lc-row-actions { display:flex; gap:8px; justify-content:flex-end; flex-wrap:nowrap; }
+  .lc-row-actions .btn { white-space:nowrap; }
+</style>
+
+<div class="page-header">
+  <div>
+    <h1>Leave Categories</h1>
+    <p>These are the options employees see under <strong>Leave Category</strong> when they apply for leave.</p>
+  </div>
+  <a href="{% url 'leaves:approvals' %}" class="btn btn-outline btn-sm">&larr; Back to Leave Requests</a>
+</div>
+
+<div class="lc-grid">
+  <div class="lc-card">
+    <h3>Add a category</h3>
+    <p class="hint">e.g. Maternity Leave, Marriage Leave, Comp Off.</p>
+    <form method="post">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="add">
+      <input type="text" name="name" class="lc-input" maxlength="60" placeholder="Category name" required>
+      <button type="submit" class="btn btn-primary" style="width:100%; margin-top:12px;">Add Category</button>
+    </form>
+  </div>
+
+  <div class="lc-card" style="overflow-x:auto;">
+    <h3>Existing categories</h3>
+    <table class="lc-table">
+      <tr>
+        <th>Name</th><th>Order</th><th>Status</th><th>Used by</th><th></th>
+      </tr>
+      {% for c in categories %}
+      <tr>
+        <td class="lc-name">
+          <form method="post" id="edit-{{ c.id }}">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="edit">
+            <input type="hidden" name="category_id" value="{{ c.id }}">
+            <input type="text" name="name" value="{{ c.name }}" class="lc-input" maxlength="60" required>
+          </form>
+          <div class="lc-code">code: {{ c.code }}</div>
+        </td>
+        <td><input type="number" name="sort_order" value="{{ c.sort_order }}" min="0" form="edit-{{ c.id }}" class="lc-input lc-order"></td>
+        <td>{% if c.is_active %}<span class="lc-pill on">Visible</span>{% else %}<span class="lc-pill off">Hidden</span>{% endif %}</td>
+        <td>{{ c.request_count }} request{{ c.request_count|pluralize }}</td>
+        <td>
+          <div class="lc-row-actions">
+            <button type="submit" form="edit-{{ c.id }}" class="btn btn-primary btn-sm">Save</button>
+            <form method="post">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="toggle">
+              <input type="hidden" name="category_id" value="{{ c.id }}">
+              <button type="submit" class="btn btn-outline btn-sm">{% if c.is_active %}Hide{% else %}Show{% endif %}</button>
+            </form>
+            <form method="post" onsubmit="return confirm('Delete {{ c.name|escapejs }}?');">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="delete">
+              <input type="hidden" name="category_id" value="{{ c.id }}">
+              <button type="submit" class="btn btn-danger btn-sm" {% if c.request_count %}disabled title="Already used - hide it instead"{% endif %}>Delete</button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="5" style="text-align:center; color:#9ca3af; padding:24px;">No categories yet &mdash; add one on the left. Employees can't apply for leave until at least one is visible.</td></tr>
+      {% endfor %}
+    </table>
+    <p class="hint" style="margin-top:14px;">Renaming a category also renames it on old requests. A category that has requests can be hidden but not deleted.</p>
+  </div>
+</div>
+{% endblock %}

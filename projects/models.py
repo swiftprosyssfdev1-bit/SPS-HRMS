@@ -65,6 +65,13 @@ class Project(models.Model):
             return 'UPCOMING'
         return 'ACTIVE'
 
+    @property
+    def current_team_size(self):
+        """Members working on the project NOW. (assignments.count also counted
+        people who had already left, so the list showed inflated team sizes.)
+        Uses the prefetched assignments, so it adds no queries."""
+        return sum(1 for a in self.assignments.all() if a.is_current)
+
     def __str__(self):
         return self.name
 

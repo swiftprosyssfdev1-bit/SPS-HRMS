@@ -1,26 +1,55 @@
-<div class="card" style="margin-top:24px;">
+<style>
+  .recent-changes-table { width: 100%; table-layout: auto; border-collapse: collapse; }
+  .recent-changes-table th, .recent-changes-table td { text-align: left !important; vertical-align: top !important; }
+  .recent-changes-table th:not(.col-details), .recent-changes-table td:not(.col-details) { white-space: nowrap !important; }
+  .recent-changes-table .col-details,
+  .recent-changes-table th.col-details,
+  .recent-changes-table td.col-details,
+  .recent-changes-table th:last-child,
+  .recent-changes-table td:last-child {
+    min-width: 340px !important;
+    width: 55% !important;
+    white-space: normal !important;
+    word-break: normal !important;
+    overflow-wrap: anywhere !important;
+    text-align: left !important;
+    line-height: 1.5 !important;
+  }
+  .recent-changes-table .col-details ul { margin: 0; padding-left: 18px; }
+  .recent-changes-table .col-details li { margin-bottom: 3px; }
+  .recent-changes-table .col-details details { margin-top: 6px; text-align: left !important; }
+  .recent-changes-table .col-details summary { cursor: pointer; font-size: 0.8rem; color: var(--electric-blue); font-weight: 600; text-align: left !important; }
+</style>
+
+<div class="card" style="margin-top:24px; overflow-x:auto;">
   <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
     <h3 style="margin:0;">Recent Changes</h3>
     <a href="{% url 'core:recent_changes' %}" style="font-size:0.85rem; color:var(--electric-blue); font-weight:600; text-decoration:none;">View all &rarr;</a>
   </div>
-  <table>
-    <tr>
-      <th>When</th>
-      <th>By</th>
-      <th>What happened</th>
-    </tr>
-    {% for log in recent_changes %}
-    <tr>
-      <td style="white-space:nowrap;">{{ log.created_at|date:"d M Y, h:i A" }}</td>
-      <td>{{ log.actor_name|default:"System" }}{% if log.actor_role %}<br><span style="font-size:0.78rem; color:var(--grey-500);">{{ log.actor_role }}</span>{% endif %}</td>
-      <td>
-        <span class="badge badge-info">{{ log.get_action_display }}</span>
-        {{ log.summary }}
-        {% include 'components/recent_changes_list.html' %}
-      </td>
-    </tr>
-    {% empty %}
-    <tr><td colspan="3" class="empty-state">No changes recorded yet.</td></tr>
-    {% endfor %}
+  <table class="recent-changes-table">
+    <thead>
+      <tr>
+        <th>When</th>
+        <th>By</th>
+        <th class="col-details">What happened</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for log in recent_changes %}
+      <tr>
+        <td>{{ log.created_at|date:"d M Y, h:i A" }}</td>
+        <td>{{ log.actor_name|default:"System" }}{% if log.actor_role %}<br><span style="font-size:0.78rem; color:var(--grey-500);">{{ log.actor_role }}</span>{% endif %}</td>
+        <td class="col-details">
+          <div style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
+            <span class="badge badge-info">{{ log.get_action_display }}</span>
+            <span>{{ log.summary }}</span>
+          </div>
+          {% include 'components/recent_changes_list.html' %}
+        </td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="3" class="empty-state">No changes recorded yet.</td></tr>
+      {% endfor %}
+    </tbody>
   </table>
 </div>

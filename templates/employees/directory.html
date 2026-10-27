@@ -33,7 +33,7 @@
   </form>
 </div>
 
-<div class="card">
+<div class="card" id="directory-results">
   {% if is_team_view %}
   {% for group_name, group_type, emps in directory_groups %}
   <div style="margin-bottom:28px;">
@@ -43,8 +43,8 @@
     </h3>
     <table>
       <tr>
-        <th>Employee</th>
-        <th>ID</th>
+        <th>Employee Name</th>
+        <th>Employee ID</th>
         <th>Department</th>
         <th>Role</th>
         <th>Status</th>
@@ -78,8 +78,8 @@
   {% else %}
   <table>
     <tr>
-      <th>Employee</th>
-      <th>ID</th>
+      <th>Employee Name</th>
+      <th>Employee ID</th>
       <th>Department</th>
       {% if show_all_branches %}<th>Branch</th>{% endif %}
       <th>Role</th>
@@ -130,10 +130,35 @@
   (function () {
     var searchInput = document.getElementById('directory-search');
     var form = document.getElementById('directory-filter-form');
-    var debounceTimer;
+    var timer, controller;
+
+    // Search as you type WITHOUT reloading the page, so the box keeps focus
+    // and you can keep typing.
+    function liveSearch() {
+      var params = new URLSearchParams(new FormData(form)).toString();
+      var url = window.location.pathname + (params ? '?' + params : '');
+      if (controller) controller.abort();
+      controller = new AbortController();
+      fetch(url, { signal: controller.signal, headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+        .then(function (r) { if (!r.ok) throw new Error('bad response'); return r.text(); })
+        .then(function (html) {
+          var doc = new DOMParser().parseFromString(html, 'text/html');
+          var fresh = doc.getElementById('directory-results');
+          var current = document.getElementById('directory-results');
+          if (!fresh || !current) { form.submit(); return; }
+          current.innerHTML = fresh.innerHTML;
+          history.replaceState(null, '', url);
+        })
+        .catch(function (err) { if (err.name !== 'AbortError') form.submit(); });
+    }
+
     searchInput.addEventListener('input', function () {
-      clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(function () { form.submit(); }, 500);
+      clearTimeout(timer);
+      timer = setTimeout(liveSearch, 300);
+    });
+    // Enter key: run the same live search instead of a full page reload.
+    form.addEventListener('submit', function (e) {
+      if (document.activeElement === searchInput) { e.preventDefault(); clearTimeout(timer); liveSearch(); }
     });
   })();
 </script>

@@ -10,7 +10,7 @@ from attendance.models import AttendanceRecord
 from leaves.models import LeaveRequest
 from employees.models import EmployeeProfile
 from django.contrib import messages
-from core.utils import user_can_switch_branch, get_manager_team, get_gm_scope
+from core.utils import user_can_switch_branch, get_manager_team, get_gm_scope, dashboard_all_branches
 from core.models import Branch, User, ActivityLog
 from django.core.paginator import Paginator
 
@@ -377,16 +377,16 @@ def set_active_branch(request):
             return redirect('core:dashboard')
         branch_id = request.POST.get('branch_id')
         if branch_id == 'all':
-            # "All Branches" is a dashboard-only view for GM (HR); it does
-            # not change the active branch used by the other pages.
-            if user.role == 'SENIOR_HR':
+            # "All Branches" is a dashboard-only view for GM (HR) and COO; it
+            # does not change the active branch used by the other pages.
+            if user.role in ('SENIOR_HR', 'COO'):
                 request.session['dashboard_all_branches'] = True
                 messages.success(request, "You are now viewing All Branches.")
             else:
                 messages.error(request, "You don't have access to that view.")
             return redirect(request.POST.get('next') or 'core:dashboard')
         if branch_id:
-            request.session.pop('dashboard_all_branches', None)
+            request.session['dashboard_all_branches'] = False
             if user.role in ('ADMIN', 'SENIOR_HR', 'COO') or getattr(user, 'can_access_all_branches', False):
                 allowed = Branch.objects.all()
             else:
@@ -454,6 +454,11 @@ def dashboard(request):
         days_elapsed = max(0, (month_effective_end - month_start).days + 1)
 
         context['selected_month'] = month_start.strftime('%Y-%m')
+
+        # "All Branches" picked in the dropdown -> show every branch at once.
+        coo_all_branches = dashboard_all_branches(request)
+        coo_scope_branch = None if coo_all_branches else active_branch
+        context['show_all_branches'] = coo_all_branches
         # Last 12 months (including current) for the dropdown, newest first.
         month_options = []
         y, m = today.year, today.month
@@ -465,8 +470,8 @@ def dashboard(request):
                 y -= 1
         context['month_options'] = month_options
 
-        if active_branch:
-            branches = [active_branch]
+        if coo_scope_branch:
+            branches = [coo_scope_branch]
         else:
             branches = Branch.objects.all().order_by('code')
         branch_stats = []
@@ -547,9 +552,9 @@ def dashboard(request):
         # branch — COO sees every branch, so one pie per branch. Uses
         # the same selected month as the rest of this dashboard. ----
         import json
-        if active_branch:
+        if coo_scope_branch:
             user_ids = list(
-                User.objects.filter(branch=active_branch)
+                User.objects.filter(branch=coo_scope_branch)
                 .exclude(role__in=['HR', 'SENIOR_HR', 'ADMIN'])
                 .values_list('id', flat=True)
             )
@@ -566,7 +571,7 @@ def dashboard(request):
         # GM (HR) can pick "All Branches" in the dropdown: every card below
         # is then company-wide (stats_branch=None) and a branch-wise
         # breakdown table is added. Plain HR always stays on their branch.
-        show_all = user.role == 'SENIOR_HR' and bool(request.session.get('dashboard_all_branches'))
+        show_all = user.role == 'SENIOR_HR' and dashboard_all_branches(request)
         stats_branch = None if show_all else active_branch
         context['show_all_branches'] = show_all
 

@@ -1,6 +1,6 @@
 from django import forms
 from core.validators import (
-    name_validator, phone_validator,
+    alnum_id_validator, name_validator, phone_validator,
     bank_account_validator, ifsc_validator, pan_validator, aadhar_validator,
     COUNTRY_CODES,
 )
@@ -424,6 +424,17 @@ class OnboardHRForm(forms.ModelForm):
         required=True,
     )
 
+    # Optional. HR can type the IDs the person already has (the same ones used
+    # in the Employee Master Excel); blank = auto-generate, as before.
+    employee_id_number = forms.CharField(
+        max_length=20, required=False, label="Emp ID Number", validators=[alnum_id_validator],
+        widget=forms.TextInput(attrs=dict(ID_ATTRS, placeholder="Leave blank to auto-generate")),
+    )
+    enrollment_number = forms.CharField(
+        max_length=20, required=False, label="Enrollment No", validators=[alnum_id_validator],
+        widget=forms.TextInput(attrs=dict(ID_ATTRS, placeholder="Leave blank to auto-generate")),
+    )
+
     department = forms.ModelChoiceField(
         queryset=Department.objects.none(), required=False,
         widget=DepartmentSelect(attrs={'class': 'form-control'})
@@ -491,11 +502,38 @@ class OnboardHRForm(forms.ModelForm):
         for field in self.fields.values():
             field.widget.attrs.setdefault('class', 'form-control')
 
+    @staticmethod
+    def _norm_id(value):
+        return (value or '').replace(' ', '').upper()
+
+    def clean_employee_id_number(self):
+        val = self._norm_id(self.cleaned_data.get('employee_id_number'))
+        if val and (User.objects.filter(employee_id__iexact=val).exists()
+                    or User.objects.filter(username__iexact=val).exists()):
+            raise forms.ValidationError(f"Emp ID Number '{val}' is already used by another account.")
+        return val
+
+    def clean_enrollment_number(self):
+        val = self._norm_id(self.cleaned_data.get('enrollment_number'))
+        if val and EmployeeProfile.objects.filter(enrollment_id__iexact=val).exists():
+            raise forms.ValidationError(f"Enrollment No '{val}' is already used by another account.")
+        return val
+
     def clean(self):
         cleaned = super().clean()
         role = cleaned.get('role')
         if role in (User.ROLE_EMPLOYEE, User.ROLE_MANAGER, User.ROLE_PROJECT_MANAGER,
                     User.ROLE_GENERAL_MANAGER, User.ROLE_CTO):
+            branch = cleaned.get('branch')
+            if branch:
+                from employees.id_utils import employee_id_prefix_for_branch, enrollment_prefix_for_branch
+                for field, prefix in (
+                    ('employee_id_number', employee_id_prefix_for_branch(branch)),
+                    ('enrollment_number', enrollment_prefix_for_branch(branch)),
+                ):
+                    val = cleaned.get(field)
+                    if val and not (val.startswith(prefix) and val[len(prefix):].isdigit()):
+                        self.add_error(field, f"Must look like {prefix}0001 for {branch.name}.")
             # These roles are all branch-scoped: HR/COO dashboards bucket
             # their leave analytics (and other per-branch reporting) by
             # user.branch, so a NULL branch here silently drops them out

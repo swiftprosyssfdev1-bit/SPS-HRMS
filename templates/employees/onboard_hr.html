@@ -37,6 +37,8 @@
         {% if form.password.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ form.password.errors.0 }}</p>{% endif %}
       </div>
       <div><label>Role</label>{{ form.role|add_error_class }}</div>
+      <div><label>Emp ID Number <span style="font-weight:400; color:var(--grey-500);">(optional)</span></label>{{ form.employee_id_number|add_error_class }}{% if form.employee_id_number.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ form.employee_id_number.errors.0 }}</p>{% endif %}</div>
+      <div><label>Enrollment No <span style="font-weight:400; color:var(--grey-500);">(optional)</span></label>{{ form.enrollment_number|add_error_class }}{% if form.enrollment_number.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ form.enrollment_number.errors.0 }}</p>{% endif %}</div>
     </div>
 
     <div id="single-branch-wrap" style="margin-top:14px;">

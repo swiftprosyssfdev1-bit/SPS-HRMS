@@ -10,5 +10,6 @@ urlpatterns = [
     path('notifications/', views.notifications, name='notifications'),
     path('api/check_balance/', views.check_leave_balance, name='check_balance'),
     path('appreciation/', views.appreciation_report, name='appreciation_report'),
+    path('categories/', views.leave_categories, name='categories'),
 ]
 

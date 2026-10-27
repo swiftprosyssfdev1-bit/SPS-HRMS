@@ -16,8 +16,10 @@
       <td>{{ doc.get_doc_type_display }}</td>
       <td>{{ doc.uploaded_at|date:"d M Y" }}</td>
       <td>
-        <a href="{{ doc.file.url }}" target="_blank" class="btn btn-outline btn-sm" style="margin-right:2px;">View</a>
-        <a href="{% url 'employees:download_document' doc.id %}" class="btn btn-primary btn-sm">Download</a>
+        <div class="table-actions">
+          <a href="{{ doc.file.url }}" target="_blank" class="btn btn-outline btn-sm">View</a>
+          <a href="{% url 'employees:download_document' doc.id %}" class="btn btn-primary btn-sm">Download</a>
+        </div>
       </td>
     </tr>
     {% empty %}<tr><td colspan="3" class="empty-state">No letters have been issued to you yet.</td></tr>{% endfor %}

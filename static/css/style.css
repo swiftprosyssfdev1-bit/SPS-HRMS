@@ -667,9 +667,52 @@ table td .badge {
   display: inline-block;
   white-space: nowrap;
 }
-table th:last-child, table td:last-child {
+.payroll-table th:last-child,
+.payroll-table td:last-child,
+table th:empty:last-child {
   width: 90px;
   text-align: right;
+}
+
+/* ---------- Recent Changes Table ---------- */
+.recent-changes-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.recent-changes-table th,
+.recent-changes-table td {
+  vertical-align: top;
+  text-align: left;
+}
+.recent-changes-table th:last-child,
+.recent-changes-table td:last-child {
+  width: auto;
+  text-align: left;
+}
+.recent-changes-table .col-when {
+  width: 175px;
+  white-space: nowrap;
+}
+.recent-changes-table .col-actor {
+  width: 130px;
+}
+.recent-changes-table .col-action {
+  width: 130px;
+  white-space: nowrap;
+}
+.recent-changes-table .col-employee {
+  width: 130px;
+}
+.recent-changes-table .col-branch {
+  width: 110px;
+}
+.recent-changes-table .col-details {
+  width: auto;
+  min-width: 260px;
+  text-align: left;
+  line-height: 1.5;
+  word-break: normal;
+  overflow-wrap: break-word;
 }
 
 /* ---------- Sidebar tab badges (separate from unread-message badge) ---------- */

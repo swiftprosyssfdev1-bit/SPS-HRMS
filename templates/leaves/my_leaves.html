@@ -28,7 +28,7 @@
     </div>
 
     <div id="leave-fields" style="display:none;">
-      <label>Leave Category</label>
+      <label>Leave Category{% if request.user.role == 'HR' or request.user.role == 'SENIOR_HR' %} <a href="{% url 'leaves:categories' %}" style="font-weight:600; font-size:0.8rem; margin-left:8px; color:var(--electric-blue); text-decoration:none;">Edit categories &rarr;</a>{% endif %}</label>
       <select name="leave_type" id="leave-category" class="form-control">
         <option value="">-- Select Category --</option>
         {% for code, name in leave_types %}

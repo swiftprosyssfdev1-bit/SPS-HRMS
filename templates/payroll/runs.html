@@ -127,7 +127,9 @@
         </td>
         {% if request.user.role != 'ADMIN' %}
         <td class="payroll-actions-cell">
-          <a href="{% url 'payroll:employee_payroll_history' item.user.id %}" class="btn btn-outline btn-sm">View Slips</a>
+          <div class="table-actions">
+            <a href="{% url 'payroll:employee_payroll_history' item.user.id %}" class="btn btn-outline btn-sm">View Slips</a>
+          </div>
         </td>
         {% endif %}
       </tr>

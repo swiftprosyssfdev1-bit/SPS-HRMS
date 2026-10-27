@@ -161,3 +161,166 @@ class BranchAccessAndProfileSecurityTests(TestCase):
         self.assertEqual(self.emp_kanch.first_name, original_first)
         self.assertEqual(self.emp_kanch.role, User.ROLE_EMPLOYEE)
         self.assertEqual(self.emp_kanch.branch, self.branch_kanch)
+
+
+# ---------------------------------------------------------------------------
+# Excel import: update EXISTING employees only (Employee ID + Enrollment ID)
+# ---------------------------------------------------------------------------
+import datetime as _dt
+import io as _io
+
+from django.core.files.uploadedfile import SimpleUploadedFile
+
+
+class ExcelImportExistingOnlyTests(TestCase):
+    HEADERS = ['Enrollment No', 'Emp  ID\nNumber', 'Name', 'D O J', 'Designation', 'Address']
+
+    def setUp(self):
+        self.branch, _ = Branch.objects.get_or_create(code='B01', defaults={'name': 'Chennai'})
+        self.hr = User.objects.create_user(
+            username='imp_hr', password='password123', role=User.ROLE_HR,
+            branch=self.branch, employee_id='IMPHR01',
+        )
+        self.emp_a = self._make_employee('imp_a', 'IMPT001', 'IMPE001', 'Ravi', 'Kumar', 'Operator', 'Old Address A')
+        self.emp_b = self._make_employee('imp_b', 'IMPT002', 'IMPE002', 'Priya', 'Devi', 'Checker', 'Old Address B')
+        self.client.login(username='imp_hr', password='password123')
+
+    def _make_employee(self, username, emp_id, enr_id, first, last, designation, address):
+        u = User.objects.create_user(
+            username=username, password='password123', role=User.ROLE_EMPLOYEE,
+            branch=self.branch, employee_id=emp_id, first_name=first, last_name=last,
+        )
+        u.date_joined_company = _dt.date(2023, 1, 2)
+        u.save()
+        profile, _ = EmployeeProfile.objects.get_or_create(user=u)
+        profile.enrollment_id = enr_id
+        profile.designation = designation
+        profile.address = address
+        profile.status = 'ACTIVE'
+        profile.save()
+        return u
+
+    def _xlsx(self, rows):
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.append(self.HEADERS)
+        for r in rows:
+            ws.append([r.get('enr'), r.get('emp'), r.get('name', 'Ravi Kumar'),
+                       r.get('doj', _dt.date(2023, 1, 2)), r.get('designation'), r.get('address')])
+        buf = _io.BytesIO()
+        wb.save(buf)
+        return SimpleUploadedFile('import.xlsx', buf.getvalue())
+
+    def _post(self, rows, action='import'):
+        return self.client.post(reverse('employees:import_employees'), {
+            'branch': self.branch.id, 'action': action, 'file': self._xlsx(rows),
+        })
+
+    def _result(self, response, n=0):
+        return response.context['results'][n]
+
+    def _fresh(self, user):
+        return EmployeeProfile.objects.get(user=user)
+
+    # 1 -------------------------------------------------------------------
+    def test_both_ids_match_and_values_differ_updates_employee(self):
+        resp = self._post([{'emp': 'IMPT001', 'enr': 'IMPE001', 'designation': 'Senior Operator'}])
+        r = self._result(resp)
+        self.assertEqual(r.status, 'Updated')
+        self.assertEqual(self._fresh(self.emp_a).designation, 'Senior Operator')
+        # the other employee is untouched
+        self.assertEqual(self._fresh(self.emp_b).designation, 'Checker')
+
+    # 2 -------------------------------------------------------------------
+    def test_identical_values_report_no_changes(self):
+        resp = self._post([{'emp': 'IMPT001', 'enr': 'IMPE001', 'designation': 'Operator'}])
+        r = self._result(resp)
+        self.assertEqual(r.status, 'No Changes')
+        self.assertTrue(r.unchanged)
+        self.assertFalse(r.imported)
+        self.assertEqual(self._fresh(self.emp_a).designation, 'Operator')
+
+    # 3 -------------------------------------------------------------------
+    def test_employee_id_mismatch_is_error(self):
+        resp = self._post([{'emp': 'IMPT999', 'enr': 'IMPE001', 'designation': 'Hacked'}])
+        r = self._result(resp)
+        self.assertEqual(r.status, 'Error')
+        self.assertIn('Employee ID mismatch', ' '.join(r.errors))
+        self.assertEqual(self._fresh(self.emp_a).designation, 'Operator')
+
+    # 4 -------------------------------------------------------------------
+    def test_enrollment_id_mismatch_is_error(self):
+        resp = self._post([{'emp': 'IMPT001', 'enr': 'IMPE999', 'designation': 'Hacked'}])
+        r = self._result(resp)
+        self.assertEqual(r.status, 'Error')
+        self.assertIn('Enrollment ID mismatch', ' '.join(r.errors))
+        self.assertEqual(self._fresh(self.emp_a).designation, 'Operator')
+
+    # 5 -------------------------------------------------------------------
+    def test_ids_of_two_different_employees_is_error(self):
+        resp = self._post([{'emp': 'IMPT001', 'enr': 'IMPE002', 'designation': 'Hacked'}])
+        r = self._result(resp)
+        self.assertEqual(r.status, 'Error')
+        self.assertIn('Conflicting IDs', ' '.join(r.errors))
+        self.assertEqual(self._fresh(self.emp_a).designation, 'Operator')
+        self.assertEqual(self._fresh(self.emp_b).designation, 'Checker')
+
+    # 6 -------------------------------------------------------------------
+    def test_unknown_employee_is_error_and_nothing_is_created(self):
+        users_before = User.objects.count()
+        profiles_before = EmployeeProfile.objects.count()
+        resp = self._post([{'emp': 'NOPE001', 'enr': 'NOPE002', 'name': 'Ghost Person'}])
+        r = self._result(resp)
+        self.assertEqual(r.status, 'Error')
+        self.assertIn('Employee not found. Only existing employees can be updated.', r.errors)
+        self.assertEqual(User.objects.count(), users_before)
+        self.assertEqual(EmployeeProfile.objects.count(), profiles_before)
+        self.assertFalse(User.objects.filter(employee_id='NOPE001').exists())
+
+    # 7 -------------------------------------------------------------------
+    def test_blank_identifier_is_error(self):
+        resp = self._post([
+            {'emp': '', 'enr': 'IMPE001', 'designation': 'Hacked'},
+            {'emp': 'IMPT001', 'enr': '', 'designation': 'Hacked'},
+            {'emp': '', 'enr': '', 'designation': 'Hacked'},
+        ])
+        results = resp.context['results']
+        self.assertEqual([r.status for r in results], ['Error', 'Error', 'Error'])
+        self.assertIn('Employee ID is missing', ' '.join(results[0].errors))
+        self.assertIn('Enrollment ID is missing', ' '.join(results[1].errors))
+        self.assertIn('both missing', ' '.join(results[2].errors))
+        self.assertEqual(self._fresh(self.emp_a).designation, 'Operator')
+
+    # 8 -------------------------------------------------------------------
+    def test_blank_optional_cells_keep_existing_values(self):
+        resp = self._post([{'emp': 'IMPT001', 'enr': 'IMPE001', 'designation': 'Senior Operator', 'address': None}])
+        self.assertEqual(self._result(resp).status, 'Updated')
+        profile = self._fresh(self.emp_a)
+        self.assertEqual(profile.designation, 'Senior Operator')
+        self.assertEqual(profile.address, 'Old Address A')          # blank cell did not erase it
+
+    # extra safety ------------------------------------------------------------
+    def test_any_error_row_blocks_the_whole_file(self):
+        resp = self._post([
+            {'emp': 'IMPT001', 'enr': 'IMPE001', 'designation': 'Senior Operator'},   # valid
+            {'emp': 'IMPT002', 'enr': 'IMPE999', 'designation': 'Senior Checker'},    # error
+        ])
+        self.assertEqual([r.status for r in resp.context['results']], ['Will Update', 'Error'])
+        self.assertEqual(self._fresh(self.emp_a).designation, 'Operator')
+        self.assertEqual(self._fresh(self.emp_b).designation, 'Checker')
+
+    def test_validate_only_never_writes(self):
+        resp = self._post([{'emp': 'IMPT001', 'enr': 'IMPE001', 'designation': 'Senior Operator'}], action='validate')
+        self.assertEqual(self._result(resp).status, 'Will Update')
+        self.assertEqual(self._fresh(self.emp_a).designation, 'Operator')
+
+    def test_update_keeps_login_role_branch_and_ids(self):
+        self._post([{'emp': 'IMPT001', 'enr': 'IMPE001', 'designation': 'Senior Operator'}])
+        self.emp_a.refresh_from_db()
+        self.assertEqual(self.emp_a.username, 'imp_a')
+        self.assertTrue(self.emp_a.check_password('password123'))
+        self.assertEqual(self.emp_a.role, User.ROLE_EMPLOYEE)
+        self.assertEqual(self.emp_a.branch_id, self.branch.id)
+        self.assertEqual(self.emp_a.employee_id, 'IMPT001')
+        self.assertEqual(self._fresh(self.emp_a).enrollment_id, 'IMPE001')

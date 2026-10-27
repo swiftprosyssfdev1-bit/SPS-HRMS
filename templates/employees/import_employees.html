@@ -1,0 +1,134 @@
+{% extends 'core/base.html' %}
+{% block title %}Import Employees - SPS HRMS{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Import Existing Employees <span style="font-size:0.9rem; font-weight:500; color:var(--grey-500);">— {{ branch.name }}</span></h1>
+  <a href="{% url 'employees:directory' %}" class="btn btn-outline">&larr; Back to Directory</a>
+</div>
+
+<div class="card">
+  <h3 style="margin-top:0;">How it works</h3>
+  <ol style="margin:0 0 14px; padding-left:20px; line-height:1.8;">
+    <li><strong>Download</strong> the Employee Master template for your branch.</li>
+    <li><strong>Fill</strong> one employee per row. <em>Name</em> and <em>D O J</em> are mandatory, and so are <strong>both</strong> the <em>Emp ID Number</em> and the <em>Enrollment No</em> of an employee that already exists, and both must belong to the same employee. Their existing profile is updated; this page never creates employees.</li>
+    <li><strong>Validate only</strong> to check every row without saving anything.</li>
+    <li><strong>Validate &amp; Import</strong> once the report is clean. If any row has an error, nothing is saved. Up to {{ max_rows }} employees per file.</li>
+  </ol>
+  <a id="template-link" href="{% url 'employees:import_template' %}?branch={{ branch.id }}" class="btn btn-accent">Download Template ({{ branch.name }})</a>
+</div>
+
+<div class="card">
+  <form method="post" enctype="multipart/form-data" style="margin-bottom:0;">
+    {% csrf_token %}
+    <div style="display:flex; gap:16px; flex-wrap:wrap; align-items:end;">
+      {% if branches|length > 1 %}
+      <div style="flex:1; min-width:200px;">
+        <label>Branch</label>
+        <select name="branch" id="branch-select" class="form-control" style="margin-bottom:0;">
+          {% for b in branches %}
+          <option value="{{ b.id }}" {% if b.id == branch.id %}selected{% endif %}>{{ b.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {% else %}
+      <input type="hidden" name="branch" value="{{ branch.id }}">
+      {% endif %}
+      <div style="flex:2; min-width:260px;">
+        <label>Filled Excel file (.xlsx)</label>
+        <input type="file" name="file" accept=".xlsx" class="form-control" style="margin-bottom:0;" required>
+      </div>
+    </div>
+
+    <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:14px;">
+      <button type="submit" name="action" value="validate" class="btn btn-outline">Validate only</button>
+      <button type="submit" name="action" value="import" class="btn btn-primary">Validate &amp; Import</button>
+    </div>
+    <p style="font-size:0.82rem; color:var(--grey-500); margin:12px 0 0;">
+      Matched by Emp ID Number and Enrollment No together. Username, password, role, branch and both IDs stay as they are, and empty cells never erase saved data. Employees must be created in Onboard first.
+    </p>
+  </form>
+</div>
+
+{% if results %}
+<div style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:16px;">
+  <div class="card" style="flex:1; min-width:150px; margin:0;"><div style="font-size:1.6rem; font-weight:700;">{{ total }}</div><div>Rows in</div><div style="font-size:0.85rem; color:var(--grey-500); overflow-wrap:anywhere; word-break:break-all;">{{ file_name }}</div></div>
+  <div class="card" style="flex:1; min-width:150px; margin:0;"><div style="font-size:1.6rem; font-weight:700;">{{ update_count }}</div><div>To update (changes found)</div></div>
+  <div class="card" style="flex:1; min-width:150px; margin:0;"><div style="font-size:1.6rem; font-weight:700; color:#6b7280;">{{ unchanged_count }}</div><div>No changes</div></div>
+  <div class="card" style="flex:1; min-width:150px; margin:0;"><div style="font-size:1.6rem; font-weight:700; color:#dc2626;">{{ bad_count }}</div><div>With errors</div></div>
+  {% if action == 'import' %}
+  <div class="card" style="flex:1; min-width:150px; margin:0;"><div style="font-size:1.6rem; font-weight:700; color:#16a34a;">{{ updated_count }}</div><div>Profiles updated</div></div>
+  {% endif %}
+</div>
+
+<div class="card" style="overflow-x:auto;">
+  <table class="import-result">
+    <tr>
+      <th>Row</th>
+      <th>Name</th>
+      <th>Employee ID</th>
+      <th>Enrollment ID</th>
+      <th>Status</th>
+      <th class="col-details">Details</th>
+    </tr>
+    {% for r in results %}
+    <tr>
+      <td>{{ r.row_no }}</td>
+      <td>{{ r.name|default:"-" }}</td>
+      <td>{{ r.data.employee_id|default:"-" }}</td>
+      <td>{{ r.data.enrollment_id|default:"-" }}</td>
+      <td>
+        {% if r.status == 'Error' %}<span class="badge badge-danger">Error</span>
+        {% elif r.status == 'No Changes' %}<span class="badge badge-warning">No Changes</span>
+        {% elif r.status == 'Updated' %}<span class="badge badge-active">Updated</span>
+        {% else %}<span class="badge badge-info">Will Update</span>{% endif %}
+      </td>
+      <td class="col-details">
+        {% if r.errors %}
+        <ul style="margin:0; padding-left:18px; font-size:0.85rem; color:#b91c1c;">
+          {% for e in r.errors %}<li>{{ e }}</li>{% endfor %}
+        </ul>
+        {% elif r.unchanged %}<span style="font-size:0.85rem; color:var(--grey-700);">No changes detected.</span>
+        {% elif r.is_update %}
+        <div style="font-size:0.85rem; color:var(--grey-700);">{{ r.match_label }} &ndash; {% if r.imported %}updated{% else %}will update{% endif %}:</div>
+        <ul style="margin:2px 0 0; padding-left:18px; font-size:0.85rem;">
+          {% for label, old, new in r.changes %}<li><strong>{{ label }}</strong>: {{ old }} &rarr; {{ new }}</li>{% endfor %}
+        </ul>
+        {% else %}-{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+
+<div class="card">
+  <details>
+    <summary style="cursor:pointer; font-weight:600;">Columns that are not imported</summary>
+    <p style="margin:10px 0 0; font-size:0.9rem; color:var(--grey-700);">
+      These columns stay in the template but have no matching field in the HRMS yet, so their values are ignored:
+      {{ ignored_columns|join:", " }}.
+    </p>
+  </details>
+</div>
+
+<style>
+  .import-result { width:100%; table-layout:auto; }
+  .import-result th, .import-result td { text-align:left; vertical-align:top; }
+  .import-result th:not(.col-details), .import-result td:not(.col-details) { white-space:nowrap; }
+  .import-result .col-details { min-width:340px; width:45%; white-space:normal; word-break:normal; overflow-wrap:anywhere; text-align:left; }
+  .import-result .col-details ul { margin:0; padding-left:18px; }
+  .import-result .col-details li { margin-bottom:3px; }
+</style>
+
+<script>
+  (function () {
+    var sel = document.getElementById('branch-select');
+    var link = document.getElementById('template-link');
+    if (!sel || !link) return;
+    sel.addEventListener('change', function () {
+      link.href = "{% url 'employees:import_template' %}?branch=" + encodeURIComponent(sel.value);
+      link.textContent = 'Download Template (' + sel.options[sel.selectedIndex].text + ')';
+    });
+  })();
+</script>
+{% endblock %}

@@ -38,7 +38,11 @@ def _last_increment_date(user):
     """The date their pay was last actually increased, or their joining
     date if they've never had one — this is the baseline for the next
     one-year anniversary."""
-    last = IncrementRequest.objects.filter(user=user, status='APPROVED').order_by('-effective_date').first()
+    # APPLIED = the normal flow (COO decided -> HR applied the salary);
+    # APPROVED = the older direct-approve path. Both count as a real increment.
+    last = IncrementRequest.objects.filter(
+        user=user, status__in=['APPLIED', 'APPROVED'], effective_date__isnull=False,
+    ).order_by('-effective_date').first()
     if last:
         return last.effective_date
     return user.date_joined_company
@@ -306,7 +310,11 @@ def create_increment(request):
         manager_form = ManagerIncrementRequestForm(acting_user=request.user, branch=active_branch)
 
     # ---------- Employee tab: dropdown auto-fill data ----------
-    users_qs = User.objects.filter(role='EMPLOYEE').exclude(id=request.user.id)
+    # Employees AND Project Managers both use this tab (a PM's increment goes
+    # to their General Manager for feedback), so the JS lookup tables below
+    # must include PMs too - otherwise the page can't show a PM's name,
+    # salary or feedback manager and the form fails validation.
+    users_qs = User.objects.filter(role__in=['EMPLOYEE', 'PROJECT_MANAGER']).exclude(id=request.user.id)
     if active_branch:
         users_qs = users_qs.filter(branch=active_branch)
     users_qs = users_qs.select_related('department__manager', 'manager', 'salary_structure')
@@ -322,9 +330,14 @@ def create_increment(request):
         except SalaryStructure.DoesNotExist:
             user_basic_json[str(u.id)] = 0
 
-        pm = _current_pm_for(u)
-        user_manager_json[str(u.id)] = pm.id if pm else None
+        fb_mgr = _current_gm_for(u) if u.role == 'PROJECT_MANAGER' else _current_pm_for(u)
+        user_manager_json[str(u.id)] = fb_mgr.id if fb_mgr else None
         user_names_json[str(u.id)] = u.get_full_name() or u.username
+
+    feedback_role_json = {
+        str(m.id): m.role
+        for m in User.objects.filter(role__in=['PROJECT_MANAGER', 'CTO', 'GENERAL_MANAGER'])
+    }
 
     # ---------- Manager tab: dropdown auto-fill data ----------
     manager_qs = User.objects.filter(role__in=['MANAGER', 'PROJECT_MANAGER', 'GENERAL_MANAGER']).exclude(id=request.user.id)
@@ -351,6 +364,7 @@ def create_increment(request):
         'user_basic_json': user_basic_json,
         'user_manager_json': user_manager_json,
         'user_names_json': user_names_json,
+        'feedback_role_json': feedback_role_json,
         'manager_role_json': manager_role_json,
         'manager_basic_json': manager_basic_json,
         'manager_names_json': manager_names_json,

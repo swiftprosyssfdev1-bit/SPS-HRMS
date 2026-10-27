@@ -1,6 +1,64 @@
+import time
+
 from django.db import models
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.utils.text import slugify
+
+
+# Small in-process cache of {code: name} so list pages showing many requests
+# don't run one query per row. Cleared whenever a category is saved/deleted,
+# and expires after 30s so other worker processes pick up renames quickly.
+_CATEGORY_NAME_CACHE = {'at': 0.0, 'names': {}}
+
+
+def _category_names():
+    if time.monotonic() - _CATEGORY_NAME_CACHE['at'] > 30:
+        _CATEGORY_NAME_CACHE['names'] = dict(LeaveCategory.objects.values_list('code', 'name'))
+        _CATEGORY_NAME_CACHE['at'] = time.monotonic()
+    return _CATEGORY_NAME_CACHE['names']
+
+
+class LeaveCategory(models.Model):
+    """A leave category HR can add / rename / hide (Casual, Earned, Sick, or
+    anything new). `code` is what each LeaveRequest stores; it never changes
+    after creation, so renaming a category also renames it on every old
+    request. Categories that were ever used can be hidden but not deleted."""
+    code = models.CharField(max_length=30, unique=True, editable=False)
+    name = models.CharField(max_length=60, unique=True)
+    is_active = models.BooleanField(default=True, help_text="Inactive categories no longer appear on the Apply form.")
+    sort_order = models.PositiveIntegerField(default=100)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['sort_order', 'name']
+        verbose_name_plural = 'Leave categories'
+
+    def __str__(self):
+        return self.name
+
+    @staticmethod
+    def make_code(name):
+        base = (slugify(name).replace('-', '_').upper() or 'CATEGORY')[:24]
+        code, n = base, 2
+        while LeaveCategory.objects.filter(code=code).exists():
+            code = f"{base}_{n}"
+            n += 1
+        return code
+
+    def save(self, *args, **kwargs):
+        if not self.code:
+            self.code = self.make_code(self.name)
+        super().save(*args, **kwargs)
+        _CATEGORY_NAME_CACHE['at'] = 0.0
+
+    def delete(self, *args, **kwargs):
+        super().delete(*args, **kwargs)
+        _CATEGORY_NAME_CACHE['at'] = 0.0
+
+    @property
+    def request_count(self):
+        return LeaveRequest.objects.filter(request_type='LEAVE', leave_type=self.code).count()
 
 
 class LeaveBalance(models.Model):
@@ -30,6 +88,8 @@ class LeaveRequest(models.Model):
     only the fields captured on submission differ."""
 
     REQUEST_TYPES = [('PERMISSION', 'Permission'), ('LEAVE', 'Leave'), ('WFH', 'Work From Home')]
+    # Legacy labels, only used as a fallback if a category row is missing.
+    # The live list of categories is the LeaveCategory table (HR-managed).
     LEAVE_TYPES = [('CL', 'Casual Leave'), ('EL', 'Earned Leave'), ('SICK', 'Sick Leave')]
 
     STATUS_CHOICES = [
@@ -45,7 +105,7 @@ class LeaveRequest(models.Model):
     request_type = models.CharField(max_length=10, choices=REQUEST_TYPES, default='PERMISSION')
 
     # ---- Leave-only fields ----
-    leave_type = models.CharField(max_length=10, choices=LEAVE_TYPES, blank=True)
+    leave_type = models.CharField(max_length=30, blank=True)  # a LeaveCategory.code
     start_date = models.DateField(null=True, blank=True)
     end_date = models.DateField(null=True, blank=True)
 
@@ -95,6 +155,13 @@ class LeaveRequest(models.Model):
 
     class Meta:
         ordering = ['-applied_at']
+
+    def get_leave_type_display(self):
+        """Category name for this request (same method name Django's choices
+        used to generate, so every existing template keeps working)."""
+        if not self.leave_type:
+            return ''
+        return _category_names().get(self.leave_type) or dict(self.LEAVE_TYPES).get(self.leave_type, self.leave_type)
 
     @property
     def num_days(self):

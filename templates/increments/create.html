@@ -16,7 +16,7 @@
     <form method="post" id="increment-form">
       {% csrf_token %}
       <input type="hidden" name="form_type" value="employee">
-      <label>Employee Name</label>
+      <label>Employee / Project Manager Name</label>
       <div class="multi-check-dropdown" id="employee-multi-dropdown">
         <button type="button" class="form-control multi-check-toggle" onclick="toggleMultiDropdown('employee')">
           <span id="employee-selected-summary">-- Select employees --</span>
@@ -31,9 +31,9 @@
       {% if form.user.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:4px 0 10px;">{{ form.user.errors.0 }}</p>{% endif %}
 
       <div id="feedback-manager-wrap" style="display:none;">
-        <label>Project Manager (for Feedback)</label>
+        <label id="feedback-manager-label">Project Manager (for Feedback)</label>
         {{ form.feedback_manager }}
-        <p style="color:var(--grey-500); font-size:0.8rem; margin-top:-8px;">
+        <p style="color:var(--grey-500); font-size:0.8rem; margin-top:-8px;" id="feedback-manager-hint">
           Auto-filled from the employee's currently assigned project. This Project Manager will review performance and suggest an increment percentage.
         </p>
         {% if form.feedback_manager.errors %}<p style="color:#E4483A; font-size:0.8rem; margin:-10px 0 10px;">{{ form.feedback_manager.errors.0 }}</p>{% endif %}
@@ -77,12 +77,28 @@
     {{ user_basic_json|json_script:"user-basic-data" }}
     {{ user_manager_json|json_script:"user-manager-data" }}
     {{ user_names_json|json_script:"user-names-data" }}
+    {{ feedback_role_json|json_script:"feedback-roles-data" }}
     <script>
       (function () {
         var ROLES = JSON.parse(document.getElementById('user-roles-data').textContent);
         var BASICS = JSON.parse(document.getElementById('user-basic-data').textContent);
         var MANAGERS = JSON.parse(document.getElementById('user-manager-data').textContent);
         var NAMES = JSON.parse(document.getElementById('user-names-data').textContent);
+        var FB_ROLES = JSON.parse(document.getElementById('feedback-roles-data').textContent);
+        var fbLabel = document.getElementById('feedback-manager-label');
+        var fbHint = document.getElementById('feedback-manager-hint');
+
+        // Show only the feedback managers that make sense for the selected
+        // person: Employee -> Project Manager / CTO, Project Manager -> General Manager.
+        function limitFeedbackOptions(allowedRoles) {
+          if (!managerSelect) return;
+          Array.from(managerSelect.options).forEach(function (opt) {
+            if (!opt.value) return;
+            var ok = allowedRoles.indexOf(FB_ROLES[opt.value]) !== -1;
+            opt.hidden = !ok;
+            opt.disabled = !ok;
+          });
+        }
 
         var checkboxes = document.querySelectorAll('#employee-multi-panel input[type="checkbox"]');
         var summarySpan = document.getElementById('employee-selected-summary');
@@ -134,7 +150,13 @@
             updateRequestedPercent();
             batchNote.style.display = 'none';
 
-            if (role === 'EMPLOYEE') {
+            if (role === 'EMPLOYEE' || role === 'PROJECT_MANAGER') {
+              var isPM = role === 'PROJECT_MANAGER';
+              limitFeedbackOptions(isPM ? ['GENERAL_MANAGER'] : ['PROJECT_MANAGER', 'CTO']);
+              fbLabel.textContent = isPM ? 'General Manager (for Feedback)' : 'Project Manager (for Feedback)';
+              fbHint.textContent = isPM
+                ? "Auto-filled from this Project Manager's department head / reporting manager. The General Manager will review performance and suggest an increment percentage. If nothing is filled in, pick the General Manager."
+                : "Auto-filled from the employee's currently assigned project. This Project Manager will review performance and suggest an increment percentage.";
               wrap.style.display = '';
               noFeedbackNote.style.display = 'none';
               submitBtn.textContent = 'Send for Feedback';

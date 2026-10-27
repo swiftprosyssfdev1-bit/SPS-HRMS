@@ -10,7 +10,7 @@ from django.urls import reverse
 from core.decorators import admin_only_required, hr_or_admin_required, hr_only_required, hr_admin_or_manager_required, role_required
 from core.models import User, Branch, ActivityLog
 from core.audit import log_activity, snapshot, snapshot_all, diff_snapshots, USER_AUDIT_FIELDS
-from core.utils import user_can_switch_branch
+from core.utils import user_can_switch_branch, dashboard_all_branches
 from core.permissions import can_access_user_branch
 
 from attendance.models import AttendanceRecord
@@ -558,10 +558,7 @@ def employee_directory(request):
 
     active_branch = getattr(request, 'active_branch', None)
     # GM (HR) picked "All Branches" on the dashboard -> list every branch here too.
-    show_all_branches = (
-        request.user.role == 'SENIOR_HR'
-        and bool(request.session.get('dashboard_all_branches'))
-    )
+    show_all_branches = request.user.role == 'SENIOR_HR' and dashboard_all_branches(request)
     is_gm = request.user.role == 'GENERAL_MANAGER'
     is_team_scoped_manager = request.user.role in ('MANAGER', 'PROJECT_MANAGER', 'CTO')
 
@@ -968,7 +965,29 @@ def edit_employee_profile(request, user_id):
         # Each form is validated and saved on its own — one section having
         # no changes (or being left blank) never blocks another section
         # from saving.
-        if form.is_valid():
+        user_form_valid = form.is_valid()
+
+        # Employee ID is unique: refuse a clash with a friendly message
+        # instead of letting the database raise an IntegrityError (HTTP 500).
+        employee_id_conflict = None
+        if user_form_valid and employee_id_suffix:
+            candidate_employee_id = f"{employee_id_prefix_for_branch(emp_user.branch)}{employee_id_suffix}"
+            employee_id_conflict = (
+                User.objects.filter(employee_id=candidate_employee_id)
+                .exclude(pk=emp_user.pk).first()
+            )
+            if employee_id_conflict:
+                owner_name = employee_id_conflict.get_full_name() or employee_id_conflict.username
+                messages.error(
+                    request,
+                    f"Employee ID {candidate_employee_id} is already assigned to {owner_name}. "
+                    f"The basic profile section was not saved. "
+                    f"Next free ID for this branch: {generate_employee_id(emp_user.branch)}."
+                )
+
+        if employee_id_conflict:
+            pass
+        elif user_form_valid:
             user_obj = form.save(commit=False)
             if 'new_password' in form.cleaned_data and form.cleaned_data['new_password']:
                 user_obj.set_password(form.cleaned_data['new_password'])
@@ -1007,7 +1026,25 @@ def edit_employee_profile(request, user_id):
         else:
             messages.error(request, f"Some basic profile fields need fixing â€” those weren't saved. Errors: {form.errors}")
 
-        if identity_form.is_valid():
+        enrollment_conflict = None
+        if identity_form.is_valid() and enrollment_suffix:
+            candidate_enrollment_id = f"{enrollment_prefix}{enrollment_suffix}"
+            enrollment_conflict = (
+                EmployeeProfile.objects.filter(enrollment_id=candidate_enrollment_id)
+                .exclude(pk=profile.pk).select_related('user').first()
+            )
+            if enrollment_conflict:
+                owner = enrollment_conflict.user
+                messages.error(
+                    request,
+                    f"Enrollment ID {candidate_enrollment_id} is already assigned to "
+                    f"{owner.get_full_name() or owner.username}. The identity section was not saved. "
+                    f"Next free ID: {generate_enrollment_id(emp_user.branch)}."
+                )
+
+        if enrollment_conflict:
+            pass
+        elif identity_form.is_valid():
             profile_obj = identity_form.save(commit=False)
             if enrollment_suffix:
                 profile_obj.enrollment_id = f"{enrollment_prefix}{enrollment_suffix}"
@@ -1782,3 +1819,169 @@ def download_document(request, doc_id):
     response = FileResponse(open(doc.file.path, 'rb'))
     response['Content-Disposition'] = f'attachment; filename="{os.path.basename(doc.file.name)}"'
     return response
+
+
+
+# ---------------------------------------------------------------------------
+# Bulk import of existing employees (Excel)
+# ---------------------------------------------------------------------------
+def _importable_branches(user):
+    """Branches this HR may import into: GM (HR) / all-branch HR -> every
+    branch; a normal HR -> only the branch(es) assigned to her."""
+    if user.role == User.ROLE_SENIOR_HR or user.can_access_all_branches:
+        return list(Branch.objects.all().order_by('name'))
+    ids = set(user.accessible_branches.values_list('id', flat=True))
+    if user.branch_id:
+        ids.add(user.branch_id)
+    return list(Branch.objects.filter(id__in=ids).order_by('name'))
+
+
+def _pick_branch(request, branches):
+    wanted = request.POST.get('branch') or request.GET.get('branch') or ''
+    for b in branches:
+        if str(b.id) == str(wanted):
+            return b
+    for b in branches:
+        if b.id == request.user.branch_id:
+            return b
+    return branches[0]
+
+
+@hr_only_required
+def download_import_template(request):
+    from django.http import HttpResponse
+    from employees import importer
+    branches = _importable_branches(request.user)
+    if not branches:
+        messages.error(request, "You have no branch assigned, so there is nothing to import into.")
+        return redirect('employees:directory')
+    branch = _pick_branch(request, branches)
+    try:
+        content = importer.build_template_workbook(
+            branch, [d.name for d in importer.departments_for_branch(branch).values()]
+        )
+    except ImportError:
+        messages.error(request, "The 'openpyxl' package is not installed on the server (pip install openpyxl).")
+        return redirect('employees:import_employees')
+    response = HttpResponse(
+        content,
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+    response['Content-Disposition'] = f'attachment; filename="Employee_master_Template_{branch.code}.xlsx"'
+    return response
+
+
+@hr_only_required
+def import_employees(request):
+    """Update EXISTING employees from the Employee Master Excel template.
+
+    Each row must carry both Employee ID and Enrollment ID and both must belong
+    to the same existing employee in the chosen branch. No employee is ever
+    created. Every row is validated first; if any row has an error nothing is
+    saved (all-or-nothing, in one transaction). 'Validate only' never writes."""
+    from employees import importer
+
+    branches = _importable_branches(request.user)
+    if not branches:
+        messages.error(request, "You have no branch assigned, so there is nothing to import into.")
+        return redirect('employees:directory')
+
+    branch = _pick_branch(request, branches)
+    context = {
+        'branches': branches,
+        'branch': branch,
+        'max_rows': importer.MAX_ROWS,
+        'ignored_columns': importer.IGNORED_HEADERS,
+        'results': None,
+    }
+
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        upload = request.FILES.get('file')
+
+        def fail(msg):
+            messages.error(request, msg)
+            return render(request, 'employees/import_employees.html', context)
+
+        if not upload:
+            return fail("Please choose the filled Excel file first.")
+        if not upload.name.lower().endswith('.xlsx'):
+            return fail("Only .xlsx files are supported. Please save the template as an Excel Workbook (.xlsx).")
+        if upload.size > importer.MAX_FILE_BYTES:
+            return fail("The file is larger than 5 MB.")
+        try:
+            rows, file_errors = importer.parse_workbook(upload)
+        except ImportError:
+            return fail("The 'openpyxl' package is not installed on the server (pip install openpyxl).")
+        if file_errors:
+            for e in file_errors:
+                messages.error(request, e)
+            return render(request, 'employees/import_employees.html', context)
+
+        ictx = importer.build_context(branch)
+        results = importer.validate_rows(rows, ictx)
+        good = [r for r in results if r.ok]
+        bad = [r for r in results if not r.ok]
+        update_count = sum(1 for r in good if not r.unchanged)
+        unchanged_count = sum(1 for r in good if r.unchanged)
+        updated_count = 0
+
+        if action == 'import':
+            if bad:
+                messages.error(
+                    request,
+                    f"{len(bad)} row(s) have errors, so nothing was imported. "
+                    f"Fix the errors below and upload the file again."
+                )
+            elif not update_count:
+                messages.info(request, "No changes detected. Every employee already has these details saved.")
+            else:
+                try:
+                    updated_count = importer.commit_rows(results, ictx)   # one transaction
+                except Exception:
+                    import logging
+                    logging.getLogger(__name__).exception('Employee import failed')
+                    for r in results:
+                        r.imported = False
+                        r.target = None
+                    updated_count = 0
+                    messages.error(request, "The import failed unexpectedly and nothing was saved. Please check the file and try again.")
+                else:
+                    messages.success(
+                        request,
+                        f"{branch.name}: {updated_count} employee(s) updated, "
+                        f"{unchanged_count} with no changes."
+                    )
+                    # One history entry per updated profile (shows exactly what changed) ...
+                    for r in results:
+                        if r.imported:
+                            log_activity(
+                                request, ActivityLog.UPDATED, r.target,
+                                f"Updated profile of {r.target} from Excel import",
+                                changes=[{'field': label, 'old': old, 'new': new} for label, old, new in r.changes],
+                            )
+                    # ... and one summary entry for the whole upload.
+                    log_activity(
+                        request, ActivityLog.ADDED, None,
+                        f"Excel import into {branch.name}: {updated_count} updated, {unchanged_count} no changes",
+                        changes=[
+                            {'field': 'Employees updated', 'old': '', 'new': str(updated_count)},
+                            {'field': 'No changes', 'old': '', 'new': str(unchanged_count)},
+                            {'field': 'File', 'old': '', 'new': upload.name},
+                        ],
+                        branch=branch,
+                    )
+
+        context.update(
+            results=results,
+            action=action,
+            total=len(results),
+            good_count=len(good),
+            bad_count=len(bad),
+            update_count=update_count,
+            unchanged_count=unchanged_count,
+            updated_count=updated_count,
+            file_name=upload.name,
+        )
+
+    return render(request, 'employees/import_employees.html', context)

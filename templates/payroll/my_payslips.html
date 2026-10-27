@@ -33,7 +33,7 @@
       <td>Rs. {{ p.bonus }}</td>
       <td>Rs. {{ p.pf_deduction }}</td>
       <td><strong>Rs. {{ p.net_pay }}</strong></td>
-      <td><a href="{% url 'payroll:download_payslip' p.id %}" class="btn btn-outline btn-sm">Download PDF</a></td>
+      <td><div class="table-actions"><a href="{% url 'payroll:download_payslip' p.id %}" class="btn btn-outline btn-sm">Download PDF</a></div></td>
     </tr>
     {% empty %}<tr><td colspan="10" class="empty-state">No payslips released yet.</td></tr>{% endfor %}
   </table>

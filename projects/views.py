@@ -19,8 +19,64 @@ def _can_manage_project(user):
 
 
 def _can_view_all_projects(user):
-    """HR, Admin, and COO see every project company-wide, read-only."""
+    """HR, Admin, and COO can see projects outside their own team, read-only.
+    The list and detail pages narrow this to the branch they are working in."""
     return user.is_hr_or_admin() or user.is_coo()
+
+
+def _project_branch_q(branch):
+    """Which branch does a project belong to? The branch of its manager; if the
+    manager has none (or there is no manager), its creator's; if neither, the
+    branch of its CURRENT team. A past team member never pulls a project into
+    another branch."""
+    return (
+        Q(manager__branch=branch)
+        | Q(manager__branch__isnull=True, created_by__branch=branch)
+        | Q(manager__branch__isnull=True, created_by__branch__isnull=True,
+            assignments__is_current=True, assignments__user__branch=branch)
+    )
+
+
+def _project_in_branch(project, branch):
+    """Python twin of _project_branch_q for a single project."""
+    if branch is None:
+        return True
+    for owner in (project.manager, project.created_by):
+        if owner is not None and owner.branch_id is not None:
+            return owner.branch_id == branch.id
+    return project.assignments.filter(is_current=True, user__branch=branch).exists()
+
+
+def _project_home_branch(project):
+    """The branch a project belongs to, used to stop people from another branch
+    being added to it. Manager's branch, else creator's, else the single
+    branch all CURRENT members share. None if it can't be decided."""
+    for owner in (project.manager, project.created_by):
+        if owner is not None and owner.branch_id is not None:
+            return owner.branch
+    branches = {}
+    for a in project.assignments.select_related('user__branch'):
+        if a.is_current and a.user.branch_id:
+            branches[a.user.branch_id] = a.user.branch
+    return next(iter(branches.values())) if len(branches) == 1 else None
+
+
+def _can_manage_this_project(user, project):
+    """A Manager may edit / delete / complete a project only if it is theirs:
+    they created it, manage it, lead it, or are its GM. A General Manager or
+    CTO may also manage any project in their own branch. (Previously ANY
+    manager could change ANY project by typing its URL.)"""
+    if not user.is_manager():
+        return False
+    if user.id in (project.created_by_id, project.manager_id, project.gm_id, project.lead_id):
+        return True
+    if user.role in (User.ROLE_GENERAL_MANAGER, User.ROLE_CTO):
+        return _project_in_branch(project, user.branch)
+    return False
+
+
+def _can_set_targets(user, project):
+    return user.id in (project.lead_id, project.manager_id, project.gm_id)
 
 
 @login_required
@@ -30,11 +86,7 @@ def project_list(request):
     if _can_view_all_projects(request.user):
         projects = Project.objects.filter(status__in=['APPROVED', 'COMPLETED']).prefetch_related('assignments__user')
         if active_branch:
-            projects = projects.filter(
-                Q(manager__branch=active_branch) |
-                Q(created_by__branch=active_branch) |
-                Q(assignments__user__branch=active_branch)
-            ).distinct()
+            projects = projects.filter(_project_branch_q(active_branch)).distinct()
     else:
         # Includes created_by and gm so a General Manager who published a project
         # (and assigned a different Project Manager to run it) still sees
@@ -213,8 +265,9 @@ def project_detail(request, project_id):
     is_assigned = assignments.filter(user_id=request.user.id).exists()
     is_lead = project.lead_id == request.user.id
     is_project_manager = project.manager_id == request.user.id
+    active_branch = getattr(request, 'active_branch', None)
     can_view = (
-        _can_view_all_projects(request.user) or
+        (_can_view_all_projects(request.user) and _project_in_branch(project, active_branch)) or
         project.created_by_id == request.user.id or
         is_project_manager or
         is_assigned or
@@ -226,20 +279,20 @@ def project_detail(request, project_id):
     # Project-level management (edit name/description/dates, delete the
     # project outright): HR, Admin, or any Manager can do this. Employees
     # can never manage a project.
-    can_edit_team = _can_manage_project(request.user)
+    can_manage_project = _can_manage_this_project(request.user, project)
+    can_edit_team = can_manage_project
     is_creator_manager = project.created_by_id == request.user.id
-    can_manage_project = _can_manage_project(request.user)
 
     # Marking a project as successfully completed is a Manager action,
     # available while the project isn't already completed.
-    can_complete_project = request.user.is_manager() and project.status != 'COMPLETED'
+    can_complete_project = can_manage_project and project.status != 'COMPLETED'
 
     # Submission review permissions:
     # - The creating Manager can fully approve an update OR request corrections.
     # - HR can request corrections (to flag issues) but can never give final
     #   approval — that stays with the Manager who owns the project.
     # - Admin is always view-only here, same as everywhere else on projects.
-    can_set_targets = is_lead or is_project_manager or project.gm_id == request.user.id
+    can_set_targets = _can_set_targets(request.user, project)
     can_approve_submissions = is_creator_manager
     can_request_corrections = is_creator_manager or request.user.role in ('HR', 'SENIOR_HR')
 
@@ -247,7 +300,7 @@ def project_detail(request, project_id):
         # Server-side branch guard: employee must be in the same branch as the project.
         target_user_id = request.POST.get('user')
         target_user = get_object_or_404(User, id=target_user_id)
-        project_branch = project.manager.branch if project.manager else None
+        project_branch = _project_home_branch(project)
         if project_branch and target_user.branch != project_branch:
             messages.error(request, 'You can only assign employees from the same branch as this project.')
             return redirect('projects:project_detail', project_id=project.id)
@@ -274,7 +327,7 @@ def project_detail(request, project_id):
     # Only show employees from the same branch as the project, and never
     # Software department staff — they're routed separately (leave,
     # increments) and aren't meant to be assigned onto client Projects.
-    project_branch = project.manager.branch if project.manager else None
+    project_branch = _project_home_branch(project)
     employees = User.objects.filter(role='EMPLOYEE').exclude(
         id__in=assignments.values_list('user_id', flat=True)
     ).exclude(department__name__iexact='Software')
@@ -296,7 +349,7 @@ def edit_project(request, project_id):
     """HR, Admin, or any Manager can update a project's core details.
     Employees cannot reach this view."""
     project = get_object_or_404(Project, id=project_id)
-    if not _can_manage_project(request.user):
+    if not _can_manage_this_project(request.user, project):
         messages.error(request, "You do not have permission to edit this project.")
         return redirect('projects:project_detail', project_id=project.id)
 
@@ -312,6 +365,9 @@ def edit_project(request, project_id):
         
         lead_id = request.POST.get('lead')
         if lead_id:
+            if not (lead_id.isdigit() and project.assignments.filter(user_id=lead_id, is_current=True).exists()):
+                messages.error(request, 'The project lead must be a current member of the project team.')
+                return redirect('projects:edit_project', project_id=project.id)
             project.lead_id = lead_id
         else:
             project.lead = None
@@ -356,7 +412,7 @@ def delete_project(request, project_id):
     """HR, Admin, or any Manager can delete a project outright.
     Employees cannot reach this view."""
     project = get_object_or_404(Project, id=project_id)
-    if not _can_manage_project(request.user):
+    if not _can_manage_this_project(request.user, project):
         messages.error(request, "You do not have permission to delete this project.")
         return redirect('projects:project_detail', project_id=project.id)
 
@@ -375,8 +431,8 @@ def complete_project(request, project_id):
     completed, it moves into the "Successfully Completed" section on the
     projects list."""
     project = get_object_or_404(Project, id=project_id)
-    if not request.user.is_manager():
-        messages.error(request, "Only Managers can mark a project as completed.")
+    if not _can_manage_this_project(request.user, project):
+        messages.error(request, "Only this project's Manager can mark it as completed.")
         return redirect('projects:project_detail', project_id=project.id)
 
     if request.method == 'POST':
@@ -459,9 +515,19 @@ def set_individual_target(request, project_id, user_id):
     from projects.models import Project
     from production_tracker.models import EmployeeTargetOverride, DailyProduction
     project = get_object_or_404(Project, id=project_id)
+    if not _can_set_targets(request.user, project):
+        messages.error(request, 'Permission denied.')
+        return redirect('projects:project_detail', project_id=project.id)
     if request.method == 'POST':
+        if not project.assignments.filter(user_id=user_id).exists():
+            messages.error(request, 'That employee is not on this project.')
+            return redirect('projects:project_detail', project_id=project_id)
         work_type = request.POST.get('work_type', 'PRODUCTION')
-        target_day = int(request.POST.get('target_day', 0))
+        try:
+            target_day = int(request.POST.get('target_day') or 0)
+        except ValueError:
+            messages.error(request, 'Target must be a whole number.')
+            return redirect('projects:project_detail', project_id=project_id)
         effective_date = request.POST.get('effective_date')
         if target_day > 0 and effective_date:
             EmployeeTargetOverride.objects.update_or_create(
@@ -496,7 +562,14 @@ def set_project_target(request, project_id):
         if not (project.lead_id == request.user.id or project.manager_id == request.user.id or project.gm_id == request.user.id):
             messages.error(request, 'Permission denied.')
             return redirect('projects:project_detail', project_id=project.id)
-        target = int(request.POST.get('daily_target', 0))
+        try:
+            target = int(request.POST.get('daily_target') or 0)
+        except ValueError:
+            messages.error(request, 'Daily Target must be a whole number.')
+            return redirect('projects:project_detail', project_id=project.id)
+        if target < 0:
+            messages.error(request, 'Daily Target cannot be negative.')
+            return redirect('projects:project_detail', project_id=project.id)
         if target != project.daily_target:
             project.daily_target = target
             project.save(update_fields=['daily_target'])

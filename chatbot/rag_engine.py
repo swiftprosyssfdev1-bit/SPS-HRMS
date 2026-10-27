@@ -121,8 +121,75 @@ def get_vectorstore():
 def reset_vectorstore_cache():
     """Call this after rebuilding the index so the next query reloads it
     instead of reusing a stale cached store."""
-    global _vectorstore
+    global _vectorstore, _qa_pairs_cache
     _vectorstore = None
+    _qa_pairs_cache = None
+
+
+# ---------------------------------------------------------------------------
+# Direct Q&A answers
+#
+# The knowledge docs contain plain "Q: ... A: ..." pairs (see the Quick
+# Answers section of the addendum). The local 4B model sometimes ignores the
+# retrieved context and answers from general knowledge ("a full day is 24
+# hours"), so when the user's question is clearly one of those written
+# questions we return the written answer directly and skip the LLM.
+# ---------------------------------------------------------------------------
+_QA_PAIR_RE = re.compile(r"Q:\s*(.+?\?)\s+A:\s*(.+?)(?=\s+Q:\s|\Z)", re.DOTALL)
+_QA_STOP = {
+    'the', 'and', 'for', 'are', 'was', 'were', 'how', 'many', 'much', 'what', 'who', 'whom',
+    'when', 'where', 'which', 'why', 'can', 'could', 'should', 'would', 'does', 'did', 'has',
+    'have', 'had', 'you', 'your', 'our', 'any', 'get', 'with', 'this', 'that', 'there', 'about',
+    'tell', 'please', 'is', 'a', 'an', 'i', 'my', 'me', 'to', 'of', 'in', 'on', 'at', 'it',
+    'do', 'be', 'or', 'we', 'us',
+}
+_QA_MIN_SCORE = 0.6
+_qa_pairs_cache = None
+
+
+def _qa_tokens(text):
+    return {w for w in re.findall(r"[a-z0-9']+", text.lower()) if w not in _QA_STOP and len(w) > 1}
+
+
+def _load_qa_pairs(store):
+    """Collects every complete 'Q: ... A: ...' pair from the indexed chunks
+    (cached per process). Pairs split across a chunk boundary are skipped."""
+    global _qa_pairs_cache
+    if _qa_pairs_cache is not None:
+        return _qa_pairs_cache
+    pairs = []
+    try:
+        for d in store.docstore._dict.values():
+            for q, a in _QA_PAIR_RE.findall(d.page_content or ""):
+                q_tokens = _qa_tokens(q)
+                answer = " ".join(a.split())
+                # An answer cut off at a chunk boundary does not end in a full stop; skip it.
+                if q_tokens and answer.endswith((".", "!", "?")):
+                    pairs.append((q_tokens, answer))
+    except Exception:
+        logger.exception("Could not read Q&A pairs from the index")
+    _qa_pairs_cache = pairs
+    return pairs
+
+
+def _direct_qa_answer(store, question):
+    """Returns the written answer if the question is (nearly) the same as a
+    documented Q&A pair, else None. Jaccard overlap of content words."""
+    q_tokens = _qa_tokens(question)
+    if not q_tokens:
+        return None
+    best_score, best_answer = 0.0, None
+    for pair_tokens, answer in _load_qa_pairs(store):
+        union = len(q_tokens | pair_tokens)
+        if not union:
+            continue
+        score = len(q_tokens & pair_tokens) / union
+        if score > best_score:
+            best_score, best_answer = score, answer
+    if best_score >= _QA_MIN_SCORE:
+        logger.info("RAG: direct Q&A hit (score %.2f)", best_score)
+        return best_answer
+    return None
 
 
 RAG_PROMPT = """You are **Your Assist**, an AI HR assistant chatbot built into SPS HRMS. You are NOT a human being.
@@ -151,7 +218,7 @@ STRICT RULES — follow without exception:
 1. Answer the user strictly according to their role ({user_role}). If they ask how to do something their role cannot do (e.g., an Employee asking how to approve leaves), explicitly state they do not have the permission to access that page.
 2. You are an AI assistant. NEVER claim to be human, a colleague, or a friend.
 3. NEVER reveal, guess, or fabricate: passwords, usernames, credentials, or salaries/payslips of OTHER employees.
-4. Do NOT use general knowledge. Do NOT invent policies or company rules outside of the Context provided.
+4. Do NOT use general knowledge. Do NOT invent policies, numbers or company rules outside of the Context provided. Every number in your answer must appear in the Context. For hours, days, limits and approval steps, copy the figure exactly as written in the Context.
 5. If the context does not contain enough information regarding specific company policies, reply with exactly: NO_ANSWER_IN_CONTEXT
 6. Be concise and direct. Give them step-by-step navigation instructions if they ask how to find a page.
 {history}
@@ -246,6 +313,10 @@ def rag_answer(user, question, k=6, chat_history=None):
     store = get_vectorstore()
     if store is None:
         return None
+
+    direct = _direct_qa_answer(store, question)
+    if direct:
+        return direct
 
     try:
         # Pull more candidates than we'll keep (k) so a dynamically-phrased

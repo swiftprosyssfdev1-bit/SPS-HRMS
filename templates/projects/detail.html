@@ -21,9 +21,9 @@
 
 <div class="card">
   <p>{{ project.description|default:"No description provided." }}</p>
-  <p>
-   <p><strong>Published by:</strong> {{ project.created_by.get_full_name|default:project.created_by.username|default:"Unknown" }}{% if project.created_by %} <span class="badge badge-info" style="font-size:0.65rem;">{{ project.created_by.get_role_display }}</span>{% endif %}</p>
-  <p><strong>Project Manager:</strong> {{ project.manager.get_full_name|default:project.manager.username|default:"Unassigned" }}</p>
+  <p><strong>Published by:</strong> {% if project.created_by %}{{ project.created_by.get_full_name|default:project.created_by.username }} <span class="badge badge-info" style="font-size:0.65rem;">{{ project.created_by.get_role_display }}</span>{% else %}Unknown{% endif %}</p>
+  <p><strong>Project Manager:</strong> {% if project.manager %}{{ project.manager.get_full_name|default:project.manager.username }}{% else %}Unassigned{% endif %}</p>
+  <div>
     <strong>Lead:</strong> {{ project.lead|default:"Unassigned" }} &nbsp;|&nbsp;
     <strong>Dates:</strong> {{ project.start_date|default:"-" }} to {{ project.end_date|default:"-" }} &nbsp;|&nbsp;
     <strong>Daily Target:</strong> 
@@ -36,7 +36,7 @@
     {% else %}
       {% if project.daily_target %}{{ project.daily_target }} (same for every member){% else %}Not set{% endif %}
     {% endif %}
-  </p>
+  </div>
   {% if project.requirements_file %}
   <p><a href="{{ project.requirements_file.url }}" class="btn btn-outline btn-sm">Download Requirements</a></p>
   {% endif %}

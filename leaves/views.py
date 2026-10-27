@@ -14,7 +14,8 @@ from leaves.utils import (
 )
 
 from core.models import User
-from leaves.models import LeaveRequest, LeaveBalance, LeaveNotification
+from core.decorators import hr_only_required
+from leaves.models import LeaveRequest, LeaveBalance, LeaveNotification, LeaveCategory
 from projects.models import Project, ProjectAssignment
 
 
@@ -135,7 +136,10 @@ def my_leaves(request):
                 messages.error(request, "Please choose a date for the permission request.")
                 return redirect('leaves:my_leaves')
         elif request_type == 'LEAVE':
-            leave.leave_type = request.POST.get('leave_type')
+            leave.leave_type = request.POST.get('leave_type') or ''
+            if not LeaveCategory.objects.filter(code=leave.leave_type, is_active=True).exists():
+                messages.error(request, "Please choose a valid leave category.")
+                return redirect('leaves:my_leaves')
             leave.start_date = request.POST.get('start_date') or None
             leave.end_date = request.POST.get('end_date') or None
             if not leave.start_date or not leave.end_date:
@@ -202,7 +206,7 @@ def my_leaves(request):
         'balance': balance, 
         'requests': requests_qs, 
         'other_hrs': other_hrs,
-        'leave_types': LeaveRequest.LEAVE_TYPES,
+        'leave_types': [(c.code, c.name) for c in LeaveCategory.objects.filter(is_active=True)],
     })
 
 
@@ -499,6 +503,60 @@ def check_leave_balance(request):
             'lop_days': lop_days,
         })
     return JsonResponse({'error': 'GET request required'}, status=405)
+
+
+@hr_only_required
+def leave_categories(request):
+    """HR manages the leave categories shown on the Apply for Leave form:
+    add, rename, reorder, hide/show, or delete (only if never used)."""
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        name = (request.POST.get('name') or '').strip()
+
+        if action == 'add':
+            if not name:
+                messages.error(request, "Enter a category name.")
+            elif LeaveCategory.objects.filter(name__iexact=name).exists():
+                messages.error(request, f"'{name}' already exists.")
+            else:
+                last = LeaveCategory.objects.order_by('-sort_order').first()
+                LeaveCategory.objects.create(name=name, sort_order=(last.sort_order + 1) if last else 1)
+                messages.success(request, f"Leave category '{name}' added.")
+        else:
+            cat = get_object_or_404(LeaveCategory, id=request.POST.get('category_id'))
+            if action == 'edit':
+                try:
+                    order = int(request.POST.get('sort_order') or cat.sort_order)
+                except ValueError:
+                    order = cat.sort_order
+                if not name:
+                    messages.error(request, "Category name can't be empty.")
+                elif LeaveCategory.objects.filter(name__iexact=name).exclude(id=cat.id).exists():
+                    messages.error(request, f"'{name}' already exists.")
+                else:
+                    cat.name, cat.sort_order = name, max(order, 0)
+                    cat.save()
+                    messages.success(request, f"Category updated to '{cat.name}'.")
+            elif action == 'toggle':
+                cat.is_active = not cat.is_active
+                cat.save()
+                messages.success(
+                    request,
+                    f"'{cat.name}' is now {'visible' if cat.is_active else 'hidden'} on the Apply form."
+                )
+            elif action == 'delete':
+                if cat.request_count:
+                    messages.error(
+                        request,
+                        f"'{cat.name}' has {cat.request_count} leave request(s) and can't be deleted. "
+                        f"Hide it instead."
+                    )
+                else:
+                    cat.delete()
+                    messages.success(request, f"Category '{cat.name}' deleted.")
+        return redirect('leaves:categories')
+
+    return render(request, 'leaves/categories.html', {'categories': LeaveCategory.objects.all()})
 
 
 @login_required
