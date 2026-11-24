@@ -95,7 +95,7 @@ def diff_snapshots(before, after, hide_values=False):
     return changes
 
 
-def log_activity(request, action, target, summary, changes=None):
+def log_activity(request, action, target, summary, changes=None, branch=None):
     """Record one entry. Never raises: a logging problem must not break the
     employee action that has already succeeded."""
     from core.models import ActivityLog
@@ -110,7 +110,7 @@ def log_activity(request, action, target, summary, changes=None):
             action=action,
             target=target,
             target_name=(target.get_full_name() or target.username) if target else '',
-            branch=getattr(target, 'branch', None) if target else None,
+            branch=branch or (getattr(target, 'branch', None) if target else None),
             summary=summary[:255],
             changes=changes or [],
         )

@@ -83,8 +83,42 @@ class User(AbstractUser):
         (ROLE_GENERAL_MANAGER, 'General Manager'),
         (ROLE_EMPLOYEE, 'Employee'),
     ]
+
+    # Display titles. `role` stays the PERMISSION level that every view,
+    # template and approval chain checks. A title is a more specific name
+    # shown to people, stored in `role_title`; the account gets exactly the
+    # permissions of the base role it maps to.
+    #   key                          -> (base permission role, label)
+    ROLE_TITLES = {
+        'HR_EXECUTIVE': (ROLE_HR, 'HR Executive'),
+        'HR_ASSISTANT': (ROLE_HR, 'HR Assistant'),
+        'ASSISTANT_PROJECT_MANAGER': (ROLE_PROJECT_MANAGER, 'Assistant Project Manager'),
+        'PROJECT_LEAD': (ROLE_EMPLOYEE, 'Project Lead'),   # employee-level: a PM assigns projects to them
+    }
+
+    # What the Onboard / Role dropdowns offer. 'Manager' (same as General
+    # Manager) and plain 'HR' (now HR Executive / HR Assistant) are no longer
+    # selectable; accounts that already have them keep working unchanged.
+    SELECTABLE_ROLE_CHOICES = [
+        (ROLE_COO, 'COO'),
+        (ROLE_CTO, 'CTO'),
+        (ROLE_ADMIN, 'Admin'),
+        (ROLE_SENIOR_HR, 'GM (HR)'),
+        ('HR_EXECUTIVE', 'HR Executive'),
+        ('HR_ASSISTANT', 'HR Assistant'),
+        (ROLE_PROJECT_MANAGER, 'Project Manager'),
+        ('ASSISTANT_PROJECT_MANAGER', 'Assistant Project Manager'),
+        ('PROJECT_LEAD', 'Project Lead'),
+        (ROLE_GENERAL_MANAGER, 'General Manager'),
+        (ROLE_EMPLOYEE, 'Employee'),
+    ]
+
     is_senior_hr = models.BooleanField(default=False)
     role = models.CharField(max_length=50, choices=ROLE_CHOICES, default=ROLE_EMPLOYEE)
+    role_title = models.CharField(
+        max_length=30, blank=True, default='',
+        help_text="Display title (e.g. HR Assistant). Permissions always come from `role`.",
+    )
     employee_id = models.CharField(max_length=20, unique=True, null=True, blank=True)
     department = models.ForeignKey(Department, null=True, blank=True, on_delete=models.SET_NULL, related_name='employees')
     manager = models.ForeignKey('self', null=True, blank=True, on_delete=models.SET_NULL, related_name='team_members')
@@ -108,6 +142,25 @@ class User(AbstractUser):
     phone = models.CharField(max_length=10, blank=True)
 
     
+
+    @classmethod
+    def split_role_key(cls, key):
+        """Dropdown value -> (permission role, role_title key or '')."""
+        if key in cls.ROLE_TITLES:
+            return cls.ROLE_TITLES[key][0], key
+        return key, ''
+
+    @property
+    def role_key(self):
+        """The dropdown value that represents this user's current role."""
+        title = self.ROLE_TITLES.get(self.role_title)
+        return self.role_title if title and title[0] == self.role else self.role
+
+    def get_role_display(self):
+        title = self.ROLE_TITLES.get(self.role_title)
+        if title and title[0] == self.role:      # ignore a stale title
+            return title[1]
+        return dict(self.ROLE_CHOICES).get(self.role, self.role)
 
     def is_hr_or_admin(self):
         return self.role in (self.ROLE_ADMIN, self.ROLE_HR, self.ROLE_SENIOR_HR)

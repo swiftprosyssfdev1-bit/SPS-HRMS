@@ -1,0 +1,6 @@
+cd C:\Users\spslw\Downloads\prostaff-main_New
+git status
+git add .
+git commit -m "Updated HRMS changes"
+git pull --no-rebase target dev
+git push target dev

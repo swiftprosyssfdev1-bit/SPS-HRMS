@@ -246,7 +246,7 @@
       <p style="color:var(--grey-500); font-size:0.8rem; margin-top:-4px;">{{ role_form.is_senior_hr.help_text }}</p>
     </div>
   </form>
-  <p style="color:var(--grey-500); font-size:0.8rem; margin:0;">HR can only assign Employee or Manager. Contact Admin to grant HR/Admin access.</p>
+  <p style="color:var(--grey-500); font-size:0.8rem; margin:0;">HR can only assign operational roles (Project Manager, Assistant Project Manager, Project Lead, General Manager, Employee, ...). Contact Admin to grant HR/Admin access.</p>
 </div>
 
 {% if is_admin_viewer and emp_user.role == 'HR' or is_admin_viewer and emp_user.role == 'SENIOR_HR' %}
@@ -364,7 +364,7 @@
   if (!roleSelect || !wrap) return;
 
   function toggleSeniorHr() {
-    wrap.style.display = (roleSelect.value === 'HR') ? '' : 'none';
+    wrap.style.display = (['HR', 'HR_EXECUTIVE', 'HR_ASSISTANT'].indexOf(roleSelect.value) !== -1) ? '' : 'none';
   }
   roleSelect.addEventListener('change', toggleSeniorHr);
   toggleSeniorHr();

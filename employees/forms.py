@@ -383,16 +383,35 @@ class RoleChangeForm(forms.ModelForm):
 
         if acting_user and acting_user.role == 'ADMIN':
             # Admin sees every role, including COO.
-            self.fields['role'].choices = User.ROLE_CHOICES
+            self.fields['role'].choices = list(User.SELECTABLE_ROLE_CHOICES)
 
         if acting_user and acting_user.role in ('HR', 'SENIOR_HR'):
             self.fields['role'].choices = [
-                choice for choice in User.ROLE_CHOICES 
+                choice for choice in User.SELECTABLE_ROLE_CHOICES
                 if choice[0] not in (User.ROLE_ADMIN, User.ROLE_SENIOR_HR)
             ]
 
+        # The dropdown works with role keys (e.g. HR_ASSISTANT). Pre-select the
+        # user's current one; an account that still holds a retired role
+        # (Manager / plain HR) keeps it listed so the page does not silently
+        # show a different role.
+        if self.instance and self.instance.pk:
+            current = self.instance.role_key
+            self.initial['role'] = current
+            choices = list(self.fields['role'].choices)
+            if current not in [c[0] for c in choices]:
+                choices.insert(0, (current, self.instance.get_role_display()))
+                self.fields['role'].choices = choices
+
+    def clean_role(self):
+        """Dropdown key -> permission role; remember the display title."""
+        role, self._role_title = User.split_role_key(self.cleaned_data['role'])
+        return role
+
     def save(self, commit=True):
         user = super().save(commit=False)
+        if hasattr(self, '_role_title'):
+            user.role_title = self._role_title
         user.is_senior_hr = self.cleaned_data.get('is_senior_hr', False) if user.role == 'HR' else False
         if commit:
             user.save()
@@ -420,7 +439,7 @@ class OnboardHRForm(forms.ModelForm):
     phone = forms.CharField(max_length=10, required=False, validators=[phone_validator], widget=forms.TextInput(attrs=PHONE_ATTRS))
 
     role = forms.ChoiceField(
-        choices=User.ROLE_CHOICES,
+        choices=User.SELECTABLE_ROLE_CHOICES,
         required=True,
     )
 
@@ -473,7 +492,7 @@ class OnboardHRForm(forms.ModelForm):
             # that HR/Senior HR actors shouldn't be able to create for
             # each other; only an Admin can create a new GM (HR).
             self.fields['role'].choices = [
-                c for c in User.ROLE_CHOICES
+                c for c in User.SELECTABLE_ROLE_CHOICES
                 if c[0] not in (User.ROLE_ADMIN, User.ROLE_SENIOR_HR)
             ]
 
@@ -505,6 +524,12 @@ class OnboardHRForm(forms.ModelForm):
     @staticmethod
     def _norm_id(value):
         return (value or '').replace(' ', '').upper()
+
+    def clean_role(self):
+        """Dropdown key (e.g. HR_ASSISTANT) -> permission role; the title is
+        kept on the form for the view to save as user.role_title."""
+        role, self.role_title = User.split_role_key(self.cleaned_data['role'])
+        return role
 
     def clean_employee_id_number(self):
         val = self._norm_id(self.cleaned_data.get('employee_id_number'))

@@ -7,13 +7,6 @@
 </div>
 
 <div class="card">
-  <h3 style="margin-top:0;">How it works</h3>
-  <ol style="margin:0 0 14px; padding-left:20px; line-height:1.8;">
-    <li><strong>Download</strong> the Employee Master template for your branch.</li>
-    <li><strong>Fill</strong> one employee per row. <em>Name</em> and <em>D O J</em> are mandatory, and so are <strong>both</strong> the <em>Emp ID Number</em> and the <em>Enrollment No</em> of an employee that already exists, and both must belong to the same employee. Their existing profile is updated; this page never creates employees.</li>
-    <li><strong>Validate only</strong> to check every row without saving anything.</li>
-    <li><strong>Validate &amp; Import</strong> once the report is clean. If any row has an error, nothing is saved. Up to {{ max_rows }} employees per file.</li>
-  </ol>
   <a id="template-link" href="{% url 'employees:import_template' %}?branch={{ branch.id }}" class="btn btn-accent">Download Template ({{ branch.name }})</a>
 </div>
 

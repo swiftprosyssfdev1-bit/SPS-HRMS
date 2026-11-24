@@ -1279,7 +1279,10 @@ def onboard_hr(request):
             role = form.cleaned_data['role']
             user = form.save(commit=False)
             user.role = role
+            user.role_title = getattr(form, 'role_title', '')
             user.set_password(form.cleaned_data['password'])
+            typed_employee_id = form.cleaned_data.get('employee_id_number') or None
+            typed_enrollment_id = form.cleaned_data.get('enrollment_number') or None
 
             if role in (User.ROLE_EMPLOYEE, User.ROLE_MANAGER, User.ROLE_PROJECT_MANAGER,
                         User.ROLE_GENERAL_MANAGER, User.ROLE_CTO):
@@ -1293,11 +1296,12 @@ def onboard_hr(request):
                     user.manager = department.manager
                 else:
                     user.manager = None
-                user.employee_id = generate_employee_id(user.branch)
+                # Use the IDs HR typed; auto-generate only when left blank.
+                user.employee_id = typed_employee_id or generate_employee_id(user.branch)
                 user.save()
 
                 profile = EmployeeProfile.objects.create(user=user, status='ONBOARDING')
-                profile.enrollment_id = generate_enrollment_id(user.branch)
+                profile.enrollment_id = typed_enrollment_id or generate_enrollment_id(user.branch)
                 profile.save()
                 BankDetail.objects.get_or_create(user=user)
 
@@ -1318,7 +1322,7 @@ def onboard_hr(request):
                         },
                     )
 
-                role_label = dict(User.ROLE_CHOICES).get(role, role)
+                role_label = user.get_role_display()
                 messages.success(
                     request,
                     f'{user} onboarded as {role_label} successfully (Employee ID {user.employee_id}, Enrollment ID {profile.enrollment_id}).'
@@ -1332,18 +1336,23 @@ def onboard_hr(request):
                 user.branch = _primary_branch(accessible)
 
                 if role in (User.ROLE_HR, User.ROLE_SENIOR_HR):
-                    user.employee_id = generate_employee_id(user.branch)
+                    user.employee_id = typed_employee_id or generate_employee_id(user.branch)
+                elif typed_employee_id:
+                    user.employee_id = typed_employee_id      # COO / Admin: only if HR typed one
 
                 user.save()
                 user.accessible_branches.set(accessible)
 
                 profile = EmployeeProfile.objects.create(user=user, status='ONBOARDING')
                 if role in (User.ROLE_HR, User.ROLE_SENIOR_HR):
-                    profile.enrollment_id = generate_enrollment_id(user.branch)
+                    profile.enrollment_id = typed_enrollment_id or generate_enrollment_id(user.branch)
+                    profile.save()
+                elif typed_enrollment_id:
+                    profile.enrollment_id = typed_enrollment_id
                     profile.save()
 
                 if role in (User.ROLE_HR, User.ROLE_SENIOR_HR):
-                    role_label = 'Senior HR' if role == User.ROLE_SENIOR_HR else 'HR'
+                    role_label = 'Senior HR' if role == User.ROLE_SENIOR_HR else user.get_role_display()
                     messages.success(
                         request,
                         f'{user} onboarded as {role_label} successfully (Employee ID {user.employee_id}, Enrollment ID {profile.enrollment_id}). Branch access: {", ".join(b.name for b in accessible)}.'

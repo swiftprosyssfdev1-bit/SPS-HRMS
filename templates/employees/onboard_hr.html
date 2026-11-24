@@ -135,7 +135,7 @@
   function updateProjectVisibility() {
     if (!deptSelect || !projectWrap) return;
     var selectedOpt = deptSelect.options[deptSelect.selectedIndex];
-    var singleRoles = ['EMPLOYEE', 'MANAGER', 'PROJECT_MANAGER', 'GENERAL_MANAGER', 'CTO'];
+    var singleRoles = ['EMPLOYEE', 'MANAGER', 'PROJECT_MANAGER', 'ASSISTANT_PROJECT_MANAGER', 'PROJECT_LEAD', 'GENERAL_MANAGER', 'CTO'];
     var deptDrivenRole = singleRoles.indexOf(roleSelect.value) !== -1;
     
     var isProduction = selectedOpt && selectedOpt.text && selectedOpt.text.toLowerCase().indexOf('production') !== -1;
@@ -175,7 +175,7 @@
 
   function updateDeptFilterForCurrentMode() {
     var role = roleSelect.value;
-    var singleRoles = ['EMPLOYEE', 'MANAGER', 'PROJECT_MANAGER', 'GENERAL_MANAGER', 'CTO'];
+    var singleRoles = ['EMPLOYEE', 'MANAGER', 'PROJECT_MANAGER', 'ASSISTANT_PROJECT_MANAGER', 'PROJECT_LEAD', 'GENERAL_MANAGER', 'CTO'];
     if (singleRoles.indexOf(role) !== -1) {
       var branchId = singleBranchSelect.value;
       filterDepartmentOptions(branchId ? [branchId] : []);
@@ -187,7 +187,7 @@
 
   function updateRoleMode() {
   var role = roleSelect.value;
-  var needsSingle = (role === 'EMPLOYEE' || role === 'MANAGER' || role === 'PROJECT_MANAGER' || role === 'GENERAL_MANAGER' || role === 'CTO');
+  var needsSingle = (role === 'EMPLOYEE' || role === 'MANAGER' || role === 'PROJECT_MANAGER' || role === 'ASSISTANT_PROJECT_MANAGER' || role === 'PROJECT_LEAD' || role === 'GENERAL_MANAGER' || role === 'CTO');
   singleWrap.style.display = needsSingle ? '' : 'none';
   multiWrap.style.display = needsSingle ? 'none' : '';
   updateDeptFilterForCurrentMode();
